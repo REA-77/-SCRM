@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>媒体爬虫数据库 · media_crawler_pro</title>
+<style>
+  :root {
+    --bg: #f5f6fa;
+    --card: #ffffff;
+    --border: #e4e7ee;
+    --text: #1f2330;
+    --text-2: #6b7280;
+    --primary: #4f46e5;
+    --primary-soft: #eef2ff;
+    --primary-hover: #4338ca;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: var(--shadow);
+  }
+  header h1 { margin: 0; font-size: 17px; font-weight: 600; }
+  header .meta { color: var(--text-2); font-size: 12px; }
+  header .meta .dot { color: var(--primary); margin: 0 6px; }
+
+  .layout { display: flex; min-height: calc(100vh - 57px); }
+  /* 侧边栏 */
+  aside {
+    width: 240px;
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    padding: 12px 0;
+    overflow-y: auto;
+    flex-shrink: 0;
+  }
+  .group-label {
+    padding: 10px 16px 4px;
+    font-size: 11px;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    font-weight: 600;
+  }
+  .table-item {
+    padding: 8px 16px 8px 20px;
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    transition: background .12s;
+  }
+  .table-item:hover { background: var(--primary-soft); }
+  .table-item.active {
+    background: var(--primary-soft);
+    border-left-color: var(--primary);
+    color: var(--primary);
+    font-weight: 500;
+  }
+  .table-item .rows-badge {
+    font-size: 11px;
+    color: var(--text-2);
+    background: var(--bg);
+    padding: 1px 6px;
+    border-radius: 10px;
+    min-width: 24px;
+    text-align: center;
+  }
+
+  /* 主区 */
+  main { flex: 1; padding: 20px 24px; overflow: auto; min-width: 0; }
+  .toolbar {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow);
+  }
+  .toolbar-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .table-title { font-size: 15px; font-weight: 600; }
+  .table-title .comment { color: var(--text-2); font-weight: 400; margin-left: 8px; font-size: 13px; }
+  .toolbar-actions { display: flex; gap: 8px; align-items: center; }
+  select.size-sel {
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .filters {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .filter-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .filter-row select, .filter-row input {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    background: #fff;
+  }
+  .filter-row select { min-width: 180px; }
+  .filter-row input { min-width: 240px; flex: 1; }
+  .filter-row select:focus, .filter-row input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-soft);
+  }
+
+  .btn {
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+    transition: all .12s;
+  }
+  .btn:hover { background: var(--bg); border-color: #cdd3df; }
+  .btn.primary {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+  }
+  .btn.primary:hover { background: var(--primary-hover); }
+  .btn.icon { padding: 6px 8px; }
+  .btn.danger { color: #dc2626; border-color: #fecaca; }
+  .btn.danger:hover { background: #fef2f2; }
+
+  /* 表格 */
+  .table-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .table-scroll { overflow-x: auto; }
+  table.data {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.data th, table.data td {
+    padding: 9px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  table.data thead th {
+    background: #fafbfc;
+    font-weight: 600;
+    color: var(--text-2);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.data thead th .col-comment {
+    display: block;
+    font-weight: 400;
+    color: #9aa0aa;
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  table.data tbody tr:hover { background: var(--primary-soft); }
+  table.data tbody tr.expanded { background: #fffaf0; }
+  table.data td.muted { color: #9aa0aa; font-style: italic; }
+  table.data td.id-col { color: var(--text-2); font-family: ui-monospace, monospace; font-size: 12px; }
+  table.data tr.detail-row td {
+    background: #fafbfc;
+    padding: 12px 16px;
+    white-space: normal;
+    font-family: ui-monospace, "SFMono-Regular", monospace;
+    font-size: 12px;
+    color: var(--text);
+  }
+  table.data tr.detail-row .detail-grid {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 4px 12px;
+  }
+  table.data tr.detail-row .detail-grid .k { color: var(--text-2); }
+  table.data tr.detail-row .detail-grid .v { word-break: break-all; white-space: pre-wrap; }
+
+  /* 分页 */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 4px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .pagination .info { color: var(--text-2); font-size: 13px; }
+  .pagination .controls { display: flex; gap: 6px; align-items: center; }
+  .pagination .page-btn {
+    min-width: 30px;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .pagination .page-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .pagination .page-btn.cur {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+  }
+  .pagination input.jump {
+    width: 60px;
+    height: 30px;
+    padding: 0 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    text-align: center;
+    font-size: 13px;
+  }
+
+  /* 状态 */
+  .empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-2);
+  }
+  .empty .big { font-size: 40px; margin-bottom: 8px; }
+  .loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-2);
+  }
+  .loading .spin {
+    display: inline-block;
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+    margin-right: 8px;
+    vertical-align: -3px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: #1f2330;
+    color: #fff;
+    padding: 10px 18px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.2);
+    z-index: 100;
+    animation: slidein .25s ease;
+  }
+  @keyframes slidein { from { transform: translateY(20px); opacity: 0; } }
+  .err-banner {
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+  /* AI 分析状态条 */
+  .analyze-bar {
+    background: linear-gradient(90deg, #f0fdf4, #eff6ff);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 13px;
+    flex-wrap: wrap;
+  }
+  .analyze-bar .dot-led {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #22c55e; display: inline-block;
+    box-shadow: 0 0 0 3px rgba(34,197,94,.18);
+    animation: pulse 1.6s infinite;
+    margin-right: 6px;
+  }
+  .analyze-bar .dot-led.idle { background: #9ca3af; box-shadow: none; animation: none; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 5px rgba(34,197,94,.06); } }
+  .analyze-bar .stat { color: var(--text-2); }
+  .analyze-bar .stat b { color: var(--text); }
+  .analyze-bar .stat.neg b { color: #dc2626; }
+  .analyze-bar .cur { color: var(--primary); font-family: ui-monospace, monospace; font-size: 12px; }
+  .analyze-bar .err { color: #dc2626; font-size: 12px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 负面行高亮 + 分析列样式 */
+  table.data tbody tr.negative { background: #fef2f2 !important; }
+  table.data tbody tr.negative:hover { background: #fee2e2 !important; }
+  table.data td.cell-analyzed { color: #16a34a; font-weight: 500; white-space: nowrap; }
+  table.data td.cell-analyzed .muted { color: #9ca3af; font-weight: 400; }
+  table.data td.cell-negative { color: #dc2626; font-weight: 600; white-space: nowrap; }
+  table.data td.cell-negative.ok { color: #16a34a; }
+  table.data td.cell-reply { max-width: 280px; color: #1f2330; }
+  /* 购买意向列 + 行高亮 */
+  table.data tbody tr.intent { background: #fffbeb !important; }
+  table.data tbody tr.intent:hover { background: #fef3c7 !important; }
+  table.data td.cell-intent { color: #d97706; font-weight: 600; white-space: nowrap; }
+  table.data td.cell-intent.none { color: #9ca3af; font-weight: 400; }
+  .analyze-bar .stat.intent-stat b { color: #d97706; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📊 媒体爬虫数据库 · media_crawler_pro</h1>
+  <div class="meta">
+    <span id="dbStatus">连接中…</span>
+    <span class="dot">·</span>
+    <span id="tableCount">— 张表</span>
+    <span class="dot">·</span>
+    <span>共 <strong id="totalRows">—</strong> 行数据</span>
+  </div>
+</header>
+
+<div class="analyze-bar" id="analyzeBar">
+  <span><span class="dot-led idle" id="analyzeLed"></span><span id="analyzeState">分析进程未启动</span></span>
+  <span class="stat">已分析 <b id="statAnalyzed">—</b></span>
+  <span class="stat">待分析 <b id="statPending">—</b></span>
+  <span class="stat neg">负面 <b id="statNegative">—</b></span>
+  <span class="stat intent-stat">购买意向 <b id="statIntent">—</b></span>
+  <span class="cur" id="statCur"></span>
+  <span class="err" id="statErr"></span>
+  <span style="margin-left:auto;font-size:12px;color:var(--text-2);">新增评论自动分析 · 每 8s 轮询</span>
+</div>
+
+<div class="layout">
+  <aside id="sidebar">
+    <div class="loading"><span class="spin"></span>加载表列表…</div>
+  </aside>
+
+  <main>
+    <div class="toolbar">
+      <div class="toolbar-top">
+        <div class="table-title">
+          <span id="curTableName">—</span>
+          <span class="comment" id="curTableComment"></span>
+        </div>
+        <div class="toolbar-actions">
+          <label style="font-size:12px;color:var(--text-2);">每页
+            <select id="pageSize" class="size-sel">
+              <option>20</option>
+              <option selected>50</option>
+              <option>100</option>
+              <option>200</option>
+            </select> 条
+          </label>
+          <button class="btn primary" id="searchBtn">🔍 搜索</button>
+          <button class="btn" id="resetBtn">重置</button>
+          <button class="btn" id="exportBtn">⬇ 导出 CSV</button>
+        </div>
+      </div>
+      <div class="filters" id="filters">
+        <div class="filter-row" id="filterRow0">
+          <select class="f-col"></select>
+          <input type="text" class="f-val" placeholder="输入关键字(LIKE 模糊匹配,留空忽略)" />
+          <button class="btn icon" onclick="addFilter()" title="添加条件">➕</button>
+          <button class="btn icon danger" onclick="removeFilter(event)" title="删除此条件">✕</button>
+        </div>
+      </div>
+      <div id="errBox" class="err-banner" style="display:none;"></div>
+    </div>
+
+    <div class="table-card">
+      <div class="table-scroll">
+        <table class="data" id="dataTable">
+          <thead><tr><th>加载中…</th></tr></thead>
+          <tbody><tr><td>—</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pagination" id="pagination">
+      <div class="info" id="pageInfo">—</div>
+      <div class="controls" id="pageControls"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+const API = "/api";
+let state = {
+  tables: [],
+  groups: {},
+  curTable: null,
+  curColumns: [],   // [{name, comment, type}]
+  page: 1,
+  size: 50,
+  pages: 1,
+  total: 0,
+  rows: [],
+};
+
+const $ = id => document.getElementById(id);
+const escapeHtml = s => (s == null ? "" : String(s))
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+// 判断某列是否为 bigint/int 时间戳列(按列名特征 + 整数类型双重识别)
+// 覆盖:add_ts / last_modify_ts / *_timestamp / create_time / time / last_update_time
+// 排除:id、varchar 日期串(publish_time/created_utc)、datetime 类型的 create_time
+const isTimestampCol = col => {
+  if (!col) return false;
+  const t = (col.type || "").toLowerCase();
+  if (!t.includes("bigint") && !t.includes("int")) return false; // 仅整数类型
+  const n = col.name;
+  return n.endsWith("_ts") || n.endsWith("_timestamp") ||
+         n === "create_time" || n === "time" || n === "last_update_time";
+};
+// 把数字时间戳格式化为 'YYYY-MM-DD HH:mm:ss'(秒/毫秒自动识别,按本地时区)
+const formatTs = v => {
+  if (v === "" || v == null) return "";
+  const n = Number(v);
+  if (isNaN(n) || n <= 0) return String(v);
+  const sec = n > 1e11 ? n / 1000 : n; // 13位当毫秒,否则当秒
+  const d = new Date(sec * 1000);
+  if (isNaN(d.getTime())) return String(v);
+  const p = x => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
+const toast = msg => {
+  const t = document.createElement("div");
+  t.className = "toast"; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2000);
+};
+const showErr = msg => { const b = $("errBox"); b.textContent = "⚠ " + msg; b.style.display = "block"; };
+const clearErr = () => { $("errBox").style.display = "none"; };
+
+// ---------- 1. 加载表列表 ----------
+async function loadTables() {
+  const r = await fetch(`${API}/tables`);
+  const d = await r.json();
+  state.tables = d.tables;
+  state.groups = d.groups;
+  $("tableCount").textContent = `${state.tables.length} 张表`;
+  const totalRows = state.tables.reduce((s, t) => s + (t.rows || 0), 0);
+  $("totalRows").textContent = totalRows.toLocaleString();
+  renderSidebar();
+  // 默认选有数据的表,否则选第一个
+  const withData = state.tables.find(t => (t.rows || 0) > 0) || state.tables[0];
+  selectTable(withData.name);
+}
+
+function renderSidebar() {
+  const sb = $("sidebar");
+  sb.innerHTML = "";
+  const groupOrder = ["账号管理","跨平台热搜","B站","抖音","快手","微博","小红书","知乎","贴吧","Reddit","其他"];
+  const keys = Object.keys(state.groups);
+  const ordered = [...keys].sort((a,b) => {
+    const ia = groupOrder.indexOf(a), ib = groupOrder.indexOf(b);
+    return (ia<0?999:ia) - (ib<0?999:ib);
+  });
+  for (const g of ordered) {
+    const label = document.createElement("div");
+    label.className = "group-label";
+    label.textContent = `${g} · ${state.groups[g].length}`;
+    sb.appendChild(label);
+    for (const name of state.groups[g]) {
+      const t = state.tables.find(x => x.name === name);
+      const item = document.createElement("div");
+      item.className = "table-item" + (state.curTable === name ? " active" : "");
+      item.dataset.table = name;
+      item.innerHTML = `<span>${name}</span><span class="rows-badge">${t.rows || 0}</span>`;
+      item.onclick = () => selectTable(name);
+      sb.appendChild(item);
+    }
+  }
+}
+
+// ---------- 2. 选表 ----------
+async function selectTable(name) {
+  state.curTable = name;
+  state.page = 1;
+  renderSidebar();
+  const t = state.tables.find(x => x.name === name);
+  $("curTableName").textContent = name;
+  $("curTableComment").textContent = t.comment ? `· ${t.comment}` : "";
+  // 加载 schema
+  const r = await fetch(`${API}/schema/${name}`);
+  const d = await r.json();
+  state.curColumns = d.columns;
+  rebuildFilterColumns();
+  await loadData();
+}
+
+function rebuildFilterColumns() {
+  // 给每个 filter 行的列下拉填充当前表的字段
+  document.querySelectorAll(".f-col").forEach(sel => {
+    const prev = sel.value;
+    sel.innerHTML = state.curColumns.map(c =>
+      `<option value="${c.name}">${c.name}${c.comment ? " · " + c.comment : ""}</option>`
+    ).join("");
+    if (prev && state.curColumns.some(c => c.name === prev)) sel.value = prev;
+  });
+}
+
+function addFilter() {
+  const row = $("filterRow0").cloneNode(true);
+  row.id = "";
+  row.querySelector(".f-val").value = "";
+  row.removeAttribute("id");
+  $("filters").appendChild(row);
+  rebuildFilterColumns();
+}
+function removeFilter(ev) {
+  const rows = document.querySelectorAll("#filters .filter-row");
+  if (rows.length <= 1) {
+    // 只剩一行,清空值
+    rows[0].querySelector(".f-val").value = "";
+    return;
+  }
+  ev.target.closest(".filter-row").remove();
+}
+function collectFilters() {
+  const out = {};
+  document.querySelectorAll("#filters .filter-row").forEach(r => {
+    const col = r.querySelector(".f-col").value;
+    const val = r.querySelector(".f-val").value.trim();
+    if (col && val) out[col] = val;
+  });
+  return out;
+}
+
+// ---------- 3. 加载数据 ----------
+async function loadData() {
+  clearErr();
+  const tbl = state.curTable;
+  const filters = collectFilters();
+  const q = new URLSearchParams({
+    page: state.page, size: state.size,
+  });
+  if (Object.keys(filters).length) q.set("filters", JSON.stringify(filters));
+  $("dataTable").innerHTML = `<thead><tr><th><div class="loading"><span class="spin"></span>加载中…</div></th></tr></thead>`;
+  $("pageControls").innerHTML = "";
+  $("pageInfo").textContent = "—";
+
+  try {
+    const r = await fetch(`${API}/data/${tbl}?${q}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "请求失败");
+    state.rows = d.rows;
+    state.total = d.total;
+    state.pages = d.pages;
+    renderTable(d.columns, d.rows);
+    renderPagination();
+  } catch (e) {
+    showErr(e.message);
+    $("dataTable").innerHTML = `<thead><tr><th>错误</th></tr></thead><tbody><tr><td class="muted">${escapeHtml(e.message)}</td></tr></tbody>`;
+  }
+}
+
+function renderTable(cols, rows) {
+  const table = $("dataTable");
+  if (!rows.length) {
+    table.innerHTML = `<thead><tr>${cols.map(c => `<th>${escapeHtml(c.name)}</th>`).join("")}</tr></thead>
+      <tbody><tr><td colspan="${cols.length}" class="muted" style="text-align:center;padding:40px;">无数据</td></tr></tbody>`;
+    return;
+  }
+  const thead = `<thead><tr>${cols.map(c =>
+    `<th>${escapeHtml(c.name)}<span class="col-comment">${escapeHtml(c.comment || c.type || "")}</span></th>`
+  ).join("")}</tr></thead>`;
+  const tbody = `<tbody>${rows.map((r, i) => {
+    let rowNegative = false, rowIntent = false;
+    const cells = r.map((v, j) => {
+      const col = cols[j];
+      const cn = col ? col.name : "";
+      let cls = cn === "id" ? "id-col" : "";
+      let dispV = isTimestampCol(col) ? formatTs(v) : v;
+      // 评论 AI 分析四列特殊渲染
+      if (cn === "analyzed") {
+        cls += " cell-analyzed";
+        dispV = v === "1" ? "✓ 已分析" : "— 未分析";
+      } else if (cn === "negative_alert") {
+        cls += " cell-negative" + (v === "1" ? "" : " ok");
+        if (v === "1") { dispV = "⚠ 负面"; rowNegative = true; }
+        else { dispV = "正常"; }
+      } else if (cn === "purchase_intent") {
+        cls += " cell-intent" + (v === "1" ? "" : " none");
+        if (v === "1") { dispV = "💰 有意向"; rowIntent = true; }
+        else { dispV = "无"; }
+      } else if (cn === "reply_suggestion") {
+        cls += " cell-reply";
+      }
+      const display = v === "" ? `<span class="muted">—</span>` : escapeHtml(dispV);
+      return `<td class="${cls}" title="${escapeHtml(v)}">${display}</td>`;
+    }).join("");
+    const trCls = [rowNegative ? "negative" : "", rowIntent ? "intent" : ""].join(" ").trim();
+    return `<tr class="${trCls}" onclick="toggleDetail(this, ${i})">${cells}</tr>`;
+  }).join("")}</tbody>`;
+  table.innerHTML = thead + tbody;
+}
+
+let _detailCols = null, _detailRows = null;
+function toggleDetail(tr, idx) {
+  // 关闭其他已展开
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("detail-row")) {
+    next.remove(); tr.classList.remove("expanded"); return;
+  }
+  document.querySelectorAll("tr.detail-row").forEach(r => r.remove());
+  document.querySelectorAll("tr.expanded").forEach(r => r.classList.remove("expanded"));
+  const cols = state.curColumns;
+  const row = state.rows[idx];
+  const grid = cols.map((c, j) => {
+    const v = row[j];
+    const dispV = isTimestampCol(c) ? formatTs(v) : v;
+    return `<div class="k">${escapeHtml(c.name)}${c.comment ? "<br><span style='font-weight:400;color:#9aa0aa'>" + escapeHtml(c.comment) + "</span>" : ""}</div>
+     <div class="v">${v === "" ? '<span class="muted">—</span>' : escapeHtml(dispV)}</div>`;
+  }).join("");
+  const detailTr = document.createElement("tr");
+  detailTr.className = "detail-row";
+  detailTr.innerHTML = `<td colspan="${cols.length}"><div class="detail-grid">${grid}</div></td>`;
+  tr.after(detailTr);
+  tr.classList.add("expanded");
+}
+
+// ---------- 4. 分页 ----------
+function renderPagination() {
+  $("pageInfo").textContent = `第 ${state.page} / ${state.pages} 页 · 共 ${state.total.toLocaleString()} 条`;
+  const c = $("pageControls");
+  const btn = (label, page, disabled, cur) =>
+    `<button class="page-btn${cur ? " cur" : ""}" ${disabled ? "disabled" : ""} onclick="goPage(${page})">${label}</button>`;
+  let html = btn("‹ 上一页", state.page - 1, state.page <= 1, false);
+  // 页码窗口
+  const start = Math.max(1, state.page - 2);
+  const end = Math.min(state.pages, start + 4);
+  for (let p = start; p <= end; p++) {
+    html += btn(String(p), p, false, p === state.page);
+  }
+  if (end < state.pages) html += `<span style="color:#9aa0aa;padding:0 4px;">…</span>` + btn(String(state.pages), state.pages, false, false);
+  html += btn("下一页 ›", state.page + 1, state.page >= state.pages, false);
+  html += `<input type="number" class="jump" id="jumpInput" value="${state.page}" min="1" max="${state.pages}" />
+           <button class="page-btn" onclick="jumpTo()">Go</button>`;
+  c.innerHTML = html;
+}
+function goPage(p) {
+  if (p < 1 || p > state.pages || p === state.page) return;
+  state.page = p;
+  loadData();
+}
+function jumpTo() {
+  const v = parseInt($("jumpInput").value);
+  if (!isNaN(v)) goPage(v);
+}
+
+// ---------- 5. 事件绑定 ----------
+$("searchBtn").onclick = () => { state.page = 1; loadData(); };
+$("resetBtn").onclick = () => {
+  document.querySelectorAll(".f-val").forEach(i => i.value = "");
+  state.page = 1; loadData();
+};
+$("exportBtn").onclick = () => {
+  const filters = collectFilters();
+  const q = new URLSearchParams();
+  if (Object.keys(filters).length) q.set("filters", JSON.stringify(filters));
+  toast("开始导出 CSV,请稍候…");
+  window.location.href = `${API}/export/${state.curTable}?${q}`;
+};
+$("pageSize").onchange = e => {
+  state.size = parseInt(e.target.value);
+  state.page = 1;
+  loadData();
+};
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.classList && e.target.classList.contains("f-val")) {
+    state.page = 1; loadData();
+  }
+});
+
+// ---------- AI 分析守护进程状态 ----------
+async function loadAnalyzeStatus() {
+  try {
+    const r = await fetch(`${API}/analyze/status`);
+    const d = await r.json();
+    $("statAnalyzed").textContent = (d.total_analyzed || 0).toLocaleString();
+    $("statPending").textContent = (d.total_pending || 0).toLocaleString();
+    $("statNegative").textContent = (d.total_negative || 0).toLocaleString();
+    $("statIntent").textContent = (d.total_purchase || 0).toLocaleString();
+    const led = $("analyzeLed");
+    led.className = "dot-led" + (d.running ? "" : " idle");
+    $("analyzeState").textContent = d.running
+      ? (d.processing ? "正在分析…" : "守护运行中")
+      : "已停止";
+    $("statCur").textContent = d.last_table ? "▶ " + d.last_table : "";
+    const errEl = $("statErr");
+    errEl.textContent = d.last_error ? "⚠ " + d.last_error : "";
+    errEl.title = d.last_error || "";
+  } catch (e) {
+    $("analyzeState").textContent = "状态获取失败";
+  }
+}
+
+// ---------- 启动 ----------
+loadTables().catch(e => {
+  $("dbStatus").textContent = "连接失败";
+  showErr("无法加载表列表: " + e.message);
+});
+loadAnalyzeStatus();
+setInterval(loadAnalyzeStatus, 5000);
+$("dbStatus").textContent = "已连接 · 127.0.0.1:3306";
+</script>
+</body>
+</html>
