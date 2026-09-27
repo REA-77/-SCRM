@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>媒体爬虫数据库 · media_crawler_pro</title>
+<title>觅牛文化SCRM</title>
 <style>
   :root {
     --bg: #f5f6fa;
@@ -168,7 +168,13 @@
     overflow: hidden;
     box-shadow: var(--shadow);
   }
-  .table-scroll { overflow-x: auto; }
+  .table-scroll {
+    overflow-x: auto;
+  }
+  .table-scroll::-webkit-scrollbar { height: 10px; }
+  .table-scroll::-webkit-scrollbar-track { background: #f1f2f4; border-radius: 5px; }
+  .table-scroll::-webkit-scrollbar-thumb { background: #c9cdd4; border-radius: 5px; }
+  .table-scroll::-webkit-scrollbar-thumb:hover { background: #9aa0aa; }
   table.data {
     width: 100%;
     border-collapse: collapse;
@@ -179,9 +185,6 @@
     text-align: left;
     border-bottom: 1px solid var(--border);
     white-space: nowrap;
-    max-width: 320px;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   table.data thead th {
     background: #fafbfc;
@@ -334,13 +337,37 @@
   table.data td.cell-analyzed .muted { color: #9ca3af; font-weight: 400; }
   table.data td.cell-negative { color: #dc2626; font-weight: 600; white-space: nowrap; }
   table.data td.cell-negative.ok { color: #16a34a; }
-  table.data td.cell-reply { max-width: 280px; color: #1f2330; }
+  table.data td.cell-reply { color: #1f2330; }
   /* 购买意向列 + 行高亮 */
   table.data tbody tr.intent { background: #fffbeb !important; }
   table.data tbody tr.intent:hover { background: #fef3c7 !important; }
   table.data td.cell-intent { color: #d97706; font-weight: 600; white-space: nowrap; }
   table.data td.cell-intent.none { color: #9ca3af; font-weight: 400; }
   .analyze-bar .stat.intent-stat b { color: #d97706; }
+  .analyze-bar .stat.handled-stat b { color: #0d9488; }
+  /* 已处理列 + 行样式 */
+  table.data tbody tr.handled { background: #f0fdfa !important; }
+  table.data tbody tr.handled:hover { background: #ccfbf1 !important; }
+  table.data td.cell-handled { white-space: nowrap; font-weight: 600; }
+  table.data td.cell-handled.done { color: #0d9488; }
+  table.data td.cell-handled.todo { color: #9ca3af; font-weight: 400; }
+  /* 详情区分析结果编辑面板 */
+  .detail-actions {
+    margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border);
+  }
+  .detail-actions .da-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .detail-actions textarea {
+    width: 100%; min-height: 64px; border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; font-size: 13px; font-family: inherit; resize: vertical; box-sizing: border-box;
+  }
+  .detail-actions .da-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .tag-btn {
+    border: 1px solid var(--border); background: #fff; border-radius: 999px;
+    padding: 4px 14px; font-size: 12px; cursor: pointer; color: var(--text-2);
+  }
+  .tag-btn.on-neg { background: #fef2f2; border-color: #fecaca; color: #dc2626; font-weight: 600; }
+  .tag-btn.on-intent { background: #fffbeb; border-color: #fde68a; color: #d97706; font-weight: 600; }
+  .tag-btn.on-handled { background: #f0fdfa; border-color: #99f6e4; color: #0d9488; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -361,9 +388,10 @@
   <span class="stat">待分析 <b id="statPending">—</b></span>
   <span class="stat neg">负面 <b id="statNegative">—</b></span>
   <span class="stat intent-stat">购买意向 <b id="statIntent">—</b></span>
+  <span class="stat handled-stat">已处理 <b id="statHandled">—</b></span>
   <span class="cur" id="statCur"></span>
   <span class="err" id="statErr"></span>
-  <span style="margin-left:auto;font-size:12px;color:var(--text-2);">新增评论自动分析 · 每 8s 轮询</span>
+  <span style="margin-left:auto;font-size:12px;color:var(--text-2);">每小时全量扫描 · 已处理评论不再分析</span>
 </div>
 
 <div class="layout">
@@ -431,6 +459,7 @@ let state = {
   pages: 1,
   total: 0,
   rows: [],
+  commentTables: [],
 };
 
 const $ = id => document.getElementById(id);
@@ -475,6 +504,7 @@ async function loadTables() {
   const d = await r.json();
   state.tables = d.tables;
   state.groups = d.groups;
+  state.commentTables = d.comment_tables || [];
   $("tableCount").textContent = `${state.tables.length} 张表`;
   const totalRows = state.tables.reduce((s, t) => s + (t.rows || 0), 0);
   $("totalRows").textContent = totalRows.toLocaleString();
@@ -603,13 +633,13 @@ function renderTable(cols, rows) {
     `<th>${escapeHtml(c.name)}<span class="col-comment">${escapeHtml(c.comment || c.type || "")}</span></th>`
   ).join("")}</tr></thead>`;
   const tbody = `<tbody>${rows.map((r, i) => {
-    let rowNegative = false, rowIntent = false;
+    let rowNegative = false, rowIntent = false, rowHandled = false;
     const cells = r.map((v, j) => {
       const col = cols[j];
       const cn = col ? col.name : "";
       let cls = cn === "id" ? "id-col" : "";
       let dispV = isTimestampCol(col) ? formatTs(v) : v;
-      // 评论 AI 分析四列特殊渲染
+      // 评论 AI 分析列特殊渲染
       if (cn === "analyzed") {
         cls += " cell-analyzed";
         dispV = v === "1" ? "✓ 已分析" : "— 未分析";
@@ -621,13 +651,17 @@ function renderTable(cols, rows) {
         cls += " cell-intent" + (v === "1" ? "" : " none");
         if (v === "1") { dispV = "💰 有意向"; rowIntent = true; }
         else { dispV = "无"; }
+      } else if (cn === "handled") {
+        cls += " cell-handled " + (v === "1" ? "done" : "todo");
+        if (v === "1") { dispV = "✅ 已处理"; rowHandled = true; }
+        else { dispV = "未处理"; }
       } else if (cn === "reply_suggestion") {
         cls += " cell-reply";
       }
       const display = v === "" ? `<span class="muted">—</span>` : escapeHtml(dispV);
       return `<td class="${cls}" title="${escapeHtml(v)}">${display}</td>`;
     }).join("");
-    const trCls = [rowNegative ? "negative" : "", rowIntent ? "intent" : ""].join(" ").trim();
+    const trCls = [rowNegative ? "negative" : "", rowIntent ? "intent" : "", rowHandled ? "handled" : ""].join(" ").trim();
     return `<tr class="${trCls}" onclick="toggleDetail(this, ${i})">${cells}</tr>`;
   }).join("")}</tbody>`;
   table.innerHTML = thead + tbody;
@@ -650,11 +684,81 @@ function toggleDetail(tr, idx) {
     return `<div class="k">${escapeHtml(c.name)}${c.comment ? "<br><span style='font-weight:400;color:#9aa0aa'>" + escapeHtml(c.comment) + "</span>" : ""}</div>
      <div class="v">${v === "" ? '<span class="muted">—</span>' : escapeHtml(dispV)}</div>`;
   }).join("");
+  // 评论表:分析结果人工处理面板
+  let actions = "";
+  if (state.commentTables.includes(state.curTable)) {
+    const getV = name => {
+      const j = cols.findIndex(c => c.name === name);
+      return j >= 0 ? row[j] : "";
+    };
+    const neg = getV("negative_alert") === "1";
+    const intent = getV("purchase_intent") === "1";
+    const handled = getV("handled") === "1";
+    actions = `<div class="detail-actions">
+      <div class="da-title">🛠 分析结果人工处理${handled ? ' · <span style="color:#0d9488">✅ 已处理,守护进程不再分析本条</span>' : ""}</div>
+      <textarea id="daReply_${idx}" placeholder="建议回复(可人工修改后保存)">${escapeHtml(getV("reply_suggestion"))}</textarea>
+      <div class="da-row">
+        <button type="button" class="tag-btn${neg ? " on-neg" : ""}" onclick="toggleTag(this,'on-neg')">⚠ 负面预警</button>
+        <button type="button" class="tag-btn${intent ? " on-intent" : ""}" onclick="toggleTag(this,'on-intent')">💰 购买意向</button>
+      </div>
+      <div class="da-row">
+        <button type="button" class="btn primary" onclick="saveAnalysis(${idx})">💾 保存修改</button>
+        <button type="button" class="tag-btn${handled ? " on-handled" : ""}" onclick="toggleHandled(${idx})">${handled ? "✅ 已处理(点击取消)" : "标记为已处理"}</button>
+      </div>
+    </div>`;
+  }
   const detailTr = document.createElement("tr");
   detailTr.className = "detail-row";
-  detailTr.innerHTML = `<td colspan="${cols.length}"><div class="detail-grid">${grid}</div></td>`;
+  detailTr.innerHTML = `<td colspan="${cols.length}"><div class="detail-grid">${grid}</div>${actions}</td>`;
   tr.after(detailTr);
   tr.classList.add("expanded");
+}
+
+// 切换标签按钮选中态(仅前端样式,保存时一起提交)
+function toggleTag(btn, cls) { btn.classList.toggle(cls); }
+
+// 保存人工修改的分析字段
+async function saveAnalysis(idx) {
+  const cols = state.curColumns, row = state.rows[idx];
+  const jId = cols.findIndex(c => c.name === "id");
+  const detail = document.querySelector("tr.detail-row .detail-actions");
+  const payload = {
+    table: state.curTable,
+    id: row[jId],
+    negative_alert: detail.querySelector(".on-neg") ? 1 : 0,
+    purchase_intent: detail.querySelector(".on-intent") ? 1 : 0,
+    reply_suggestion: $(`daReply_${idx}`).value,
+  };
+  try {
+    const r = await fetch(`${API}/comment/update`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "保存失败");
+    toast("已保存分析结果");
+    await loadData();
+    loadAnalyzeStatus();
+  } catch (e) { toast("保存失败:" + e.message); }
+}
+
+// 标记/取消已处理
+async function toggleHandled(idx) {
+  const cols = state.curColumns, row = state.rows[idx];
+  const jId = cols.findIndex(c => c.name === "id");
+  const btn = document.querySelector("tr.detail-row .detail-actions .on-handled");
+  const newHandled = btn ? 0 : 1;
+  try {
+    const r = await fetch(`${API}/comment/handle`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: state.curTable, id: row[jId], handled: newHandled }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "操作失败");
+    toast(newHandled ? "已标记为已处理,后续不再自动分析" : "已取消已处理");
+    await loadData();
+    loadAnalyzeStatus();
+  } catch (e) { toast("操作失败:" + e.message); }
 }
 
 // ---------- 4. 分页 ----------
@@ -719,6 +823,7 @@ async function loadAnalyzeStatus() {
     $("statPending").textContent = (d.total_pending || 0).toLocaleString();
     $("statNegative").textContent = (d.total_negative || 0).toLocaleString();
     $("statIntent").textContent = (d.total_purchase || 0).toLocaleString();
+    $("statHandled").textContent = (d.total_handled || 0).toLocaleString();
     const led = $("analyzeLed");
     led.className = "dot-led" + (d.running ? "" : " idle");
     $("analyzeState").textContent = d.running

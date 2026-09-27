@@ -23,10 +23,15 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
 
 # ---------- 分析守护进程 ----------
-ANALYZE_INTERVAL = 8        # 轮询间隔(秒)
-ANALYZE_BATCH = 5            # 每轮每表处理条数
+ANALYZE_INTERVAL = 3600     # 轮询间隔(秒),1 小时一轮
+ANALYZE_BATCH = 0            # 每轮每表处理条数,0=不限制(一轮扫完全部待分析)
 ANALYZE_MAX_TOKENS = 200
 ANALYZE_TEMPERATURE = 0.85
+
+# ---------- 飞书负面预警(自建应用,留空则不发送)----------
+FEISHU_APP_ID = ""
+FEISHU_APP_SECRET = ""
+FEISHU_CHAT_ID = ""        # 目标群聊 chat_id(机器人需已入群)
 
 # ---------- 评论表清单(需 AI 分析的表)----------
 COMMENT_TABLES = [
@@ -46,4 +51,5 @@ COMMENT_NEW_COLUMNS = [
     ("negative_alert", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '负面预警(0:正常 1:负面)'"),
     ("purchase_intent", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '购买意向(0:无 1:有)'"),
     ("reply_suggestion", "TEXT NULL COMMENT 'AI生成的回复推荐'"),
+    ("handled", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '人工已处理(0:否 1:是,已处理不再自动分析)'"),
 ]

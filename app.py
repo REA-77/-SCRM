@@ -25,6 +25,19 @@ logger = logging.getLogger("app")
 
 MAX_EXPORT_ROWS = 100000
 
+# 侧边栏隐藏的表(仅前端不展示,不影响数据与后台分析)
+HIDDEN_TABLES = {
+    "platform_hot_search_content_rel",
+    "platform_hot_search_item",
+    "kuaishou_video",
+    "kuaishou_video_comment",
+    "tieba_comment",
+    "tieba_note",
+    "reddit_comment",
+    "reddit_creator",
+    "reddit_post",
+}
+
 
 def require_table(fn):
     @wraps(fn)
@@ -44,7 +57,7 @@ def index():
 # ---------- API ----------
 @app.route("/api/tables")
 def api_tables():
-    tables = list_tables()
+    tables = [t for t in list_tables() if t["name"] not in HIDDEN_TABLES]
     groups = {}
     for t in tables:
         n = t["name"]
@@ -132,12 +145,72 @@ def api_analyze_status():
 @app.route("/api/analyze/reset/<table>", methods=["POST"])
 @require_table
 def api_analyze_reset(table):
-    """重置某表分析状态(analyzed/negative_alert 清零,reply_suggestion 置空),便于重跑"""
+    """重置分析状态便于重跑(analyzed/negative_alert/purchase_intent 清零,reply_suggestion 置空)
+    人工已处理(handled=1)的评论不受影响"""
     with get_conn() as conn:
         with conn.cursor() as cur:
-            n = cur.execute(f"UPDATE `{table}` SET `analyzed`=0, `negative_alert`=0, `reply_suggestion`=NULL")
+            n = cur.execute(
+                f"UPDATE `{table}` SET `analyzed`=0, `negative_alert`=0, "
+                f"`purchase_intent`=0, `reply_suggestion`=NULL WHERE IFNULL(`handled`,0)=0"
+            )
         conn.commit()
     return jsonify({"reset": table, "affected": n})
+
+
+def _parse_comment_payload():
+    """校验评论修改请求,返回 (table, rid, error_response)"""
+    body = request.get_json(silent=True) or {}
+    table = body.get("table", "")
+    if table not in COMMENT_TABLES:
+        return None, None, (jsonify({"error": "非法评论表"}), 400)
+    try:
+        rid = int(body.get("id"))
+    except (TypeError, ValueError):
+        return None, None, (jsonify({"error": "非法记录 id"}), 400)
+    return table, rid, None
+
+
+@app.route("/api/comment/handle", methods=["POST"])
+def api_comment_handle():
+    """标记/取消人工已处理。已处理评论守护进程不再分析,重跑也不会覆盖"""
+    table, rid, err = _parse_comment_payload()
+    if err:
+        return err
+    handled = 1 if (request.get_json(silent=True) or {}).get("handled") else 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            n = cur.execute(
+                f"UPDATE `{table}` SET `handled`=%s, `last_modify_ts`=UNIX_TIMESTAMP() WHERE `id`=%s",
+                (handled, rid),
+            )
+        conn.commit()
+    return jsonify({"ok": True, "table": table, "id": rid, "handled": handled, "affected": n})
+
+
+@app.route("/api/comment/update", methods=["POST"])
+def api_comment_update():
+    """人工修改分析字段:negative_alert/purchase_intent/reply_suggestion"""
+    table, rid, err = _parse_comment_payload()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    sets, params = [], []
+    for k in ("negative_alert", "purchase_intent"):
+        if k in body:
+            sets.append(f"`{k}`=%s")
+            params.append(1 if body[k] else 0)
+    if "reply_suggestion" in body:
+        sets.append("`reply_suggestion`=%s")
+        params.append(str(body["reply_suggestion"] or "")[:1000])
+    if not sets:
+        return jsonify({"error": "没有可更新的分析字段"}), 400
+    sets.append("`last_modify_ts`=UNIX_TIMESTAMP()")
+    params.append(rid)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            n = cur.execute(f"UPDATE `{table}` SET {', '.join(sets)} WHERE `id`=%s", params)
+        conn.commit()
+    return jsonify({"ok": True, "table": table, "id": rid, "affected": n})
 
 
 def start_background():
