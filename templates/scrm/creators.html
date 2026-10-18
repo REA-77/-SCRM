@@ -1,0 +1,288 @@
+{% extends "scrm/base.html" %}
+{% block title %}UP主管理{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>👥 UP主管理</h2>
+    <div class="sub">维护 UP 主主体资料;平台运营账号可多条关联到同一个 UP 主</div>
+  </div>
+  <div class="actions">
+    <button class="btn primary" id="addBtn">➕ 新增 UP主</button>
+    <button class="btn" id="syncBtn">🔄 同步账号数据</button>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <a class="btn" href="/scrm/account-management">账号管理首页</a>
+  <a class="btn primary" href="/scrm/creators">UP主管理</a>
+  <a class="btn" href="/scrm/accounts">平台运营账号</a>
+</div>
+
+<div id="statRow"></div>
+
+<div class="filter-bar">
+  <select id="fPlatform">
+    <option value="">全部平台</option>
+    <option>抖音</option><option>视频号</option><option>小红书</option>
+    <option>B站</option><option>快手</option><option>微博</option>
+    <option>知乎</option>
+  </select>
+  <select id="fStatus">
+    <option value="">全部状态</option>
+    <option value="active">合作中</option>
+    <option value="reserve">储备</option>
+    <option value="retired">停用</option>
+  </select>
+  <input id="fQ" placeholder="昵称 / 运营人员 / 出镜人 / 公司 / 商务联系方式">
+  <button class="btn primary" id="searchBtn">🔍 筛选</button>
+  <button class="btn" id="resetBtn">重置</button>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th style="width:160px;">昵称</th>
+          <th style="width:110px;">关联平台</th>
+          <th style="width:90px;">账号数</th>
+          <th style="width:110px;">BIT窗口</th>
+          <th style="width:90px;">账号等级</th>
+          <th style="width:90px;">运营人员</th>
+          <th style="width:90px;">出镜人</th>
+          <th style="width:80px;">组别</th>
+          <th style="width:130px;">账号绑定公司</th>
+          <th style="width:120px;">商务微信</th>
+          <th style="width:150px;">商务邮箱</th>
+          <th style="width:200px;">绑定 Skill</th>
+          <th style="width:80px;">合作状态</th>
+          <th>备注</th>
+          <th style="width:210px;">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"><tr><td colspan="15"><span class="spin"></span> 加载中…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager" id="pager" style="padding:12px 14px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let page = 1, size = 20, total = 0, rows = [], skills = [];
+const STATUS_BADGE = { active: ["合作中", "green"], reserve: ["储备", "amber"], retired: ["停用", "gray"] };
+
+async function loadSkills() {
+  try {
+    const d = await S.api("/skills");
+    skills = d.rows || [];
+  } catch (e) { skills = []; }
+}
+
+function params() {
+  const p = new URLSearchParams();
+  const v = (id) => S.$(id).value.trim();
+  if (v("fPlatform")) p.set("platform", v("fPlatform"));
+  if (v("fStatus")) p.set("status", v("fStatus"));
+  if (v("fQ")) p.set("q", v("fQ"));
+  p.set("page", page); p.set("size", size);
+  return p;
+}
+
+async function load() {
+  S.$("tbody").innerHTML = `<tr><td colspan="15" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  try {
+    const d = await S.api("/creators?" + params().toString());
+    rows = d.rows; total = d.total;
+    renderStats(d.kpi);
+    render();
+    S.pager(S.$("pager"), total, page, size, p => { page = p; load(); });
+  } catch (e) {
+    S.$("tbody").innerHTML = `<tr><td colspan="15" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderStats(k) {
+  const cards = [
+    ["👥", "UP主总数", k.total, "kpi-primary", "账号数据同步"],
+    ["🤝", "合作中", k.active, "kpi-green", "可绑定人设 Skill"],
+    ["🧩", "已绑 Skill", k.bound, "kpi-teal", "双向同步至 Skill 页"],
+    ["👪", "覆盖组别", k.groups, "kpi-amber", "按组别管理"],
+  ];
+  S.$("statRow").innerHTML = `<div class="grid cards-4">` + cards.map(([ico, label, v, cls, foot]) =>
+    `<div class="card stat-card ${cls}">
+       <div class="kpi-ico">${ico}</div>
+       <div class="kpi-label">${label}</div>
+       <div class="kpi-value">${v}</div>
+       <div class="kpi-foot">${foot}</div>
+     </div>`).join("") + `</div>`;
+}
+
+function render() {
+  if (!rows.length) {
+    S.$("tbody").innerHTML = `<tr><td colspan="15"><div class="empty"><div class="big">👥</div>暂无 UP主，点击右上角「新增 UP主」创建，或同步账号数据</div></td></tr>`;
+    return;
+  }
+  S.$("tbody").innerHTML = rows.map(r => {
+    const [stLabel, stColor] = STATUS_BADGE[r.status] || [r.status, "gray"];
+    return `<tr>
+      <td><div class="clamp" title="${S.esc(r.name)}">${S.esc(r.name)}</div></td>
+      <td><div class="clamp" title="${S.esc(r.platforms || "")}">${S.esc(r.platforms || "—")}</div></td>
+      <td class="mono">${r.account_count || 0}</td>
+      <td class="mono" style="font-size:12px;">${S.esc(r.bit_window || "—")}</td>
+      <td>${S.esc(r.account_level || "—")}</td>
+      <td>${S.esc(r.operator || "—")}</td>
+      <td>${S.esc(r.presenter || "—")}</td>
+      <td>${S.esc(r.team_group || "—")}</td>
+      <td><div class="clamp" title="${S.esc(r.bound_company || "")}">${S.esc(r.bound_company || "—")}</div></td>
+      <td>${S.esc(r.business_wechat || "—")}</td>
+      <td><div class="clamp" title="${S.esc(r.business_email || "")}">${S.esc(r.business_email || "—")}</div></td>
+      <td>${r.bound_skills ? `<span class="badge primary">🧩 ${S.esc(r.bound_skills)}</span>` : '<span class="muted">未绑定</span>'}</td>
+      <td>${S.badge(stLabel, stColor)}</td>
+      <td><div class="clamp sub2" title="${S.esc(r.note || "")}">${S.esc(r.note || "—")}</div></td>
+      <td>
+        <button class="btn sm ${r.bound_skills ? "" : "primary"}" data-act="bind" data-id="${r.id}">${r.bound_skills ? "🧩 Skill" : "➕ Skill"}</button>
+        <button class="btn sm" data-act="edit" data-id="${r.id}">✏️ 编辑</button>
+      </td>
+    </tr>`;
+  }).join("");
+  S.$$('button[data-act="bind"]').forEach(b => b.onclick = () =>
+    bindModal(rows.find(r => r.id === Number(b.dataset.id))));
+  S.$$('button[data-act="edit"]').forEach(b => b.onclick = () =>
+    editModal(rows.find(r => r.id === Number(b.dataset.id))));
+}
+
+function bindModal(r) {
+  // 该 UP主 当前已绑定的 Skill(一个 Skill 只绑一位 UP主,反之可能多个)
+  const linked = skills.filter(x => x.bind_up === r.name);
+  const cur = linked[0] || null;
+  const PLATS = ["", "抖音", "视频号", "小红书", "B站", "快手", "微博", "知乎"];
+  const dlg = S.modal({
+    title: cur ? `Skill 详情 · ${r.name}` : `新增 Skill · ${r.name}`,
+    body: `
+      ${cur ? `
+      <div class="form-row"><label>当前绑定</label>
+        <div>${linked.map(s => `<span class="badge primary">🧩 ${S.esc(s.name)}</span>`).join(" ")}
+          ${linked.length > 1 ? `<span class="sub2">共 ${linked.length} 个,此处编辑首个</span>` : ""}</div></div>`
+      : `
+      <div class="form-row"><label>所属 UP主</label>
+        <div><b>${S.esc(r.name)}</b>
+          <div class="sub2">保存后将新建 Skill 并自动绑定该 UP主,同步至人设 Skill 管理页</div></div></div>`}
+      <div class="form-grid">
+        <div class="form-row"><label>Skill 名称 *</label>
+          <input id="bName" value="${S.esc(cur ? cur.name : "")}" placeholder="如:家电老炮·老王"></div>
+        <div class="form-row"><label>平台</label>
+          <select id="bPlatform">
+            ${PLATS.map(p => `<option ${p === (cur ? (cur.platform || "") : "") ? "selected" : ""}>${p || "通用"}</option>`).join("")}
+          </select></div>
+      </div>
+      <div class="form-row"><label>人设风格描述</label>
+        <textarea id="bStyle" placeholder="如:直爽专业的拆机党,喜欢用实测数据说话">${S.esc(cur ? (cur.style || "") : "")}</textarea></div>
+      <div class="form-row"><label>示例回复</label>
+        <textarea id="bExample" placeholder="一条符合该人设的典型回复">${S.esc(cur ? (cur.example || "") : "")}</textarea></div>
+      ${cur ? `<div class="form-row" style="margin-top:4px;">
+        <button type="button" class="btn sm danger" id="bUnbind">🔓 解除该 UP主绑定</button></div>` : ""}`,
+    okText: cur ? "保存修改" : "创建并绑定",
+    onOk: async (b) => {
+      const payload = {
+        id: cur ? cur.id : null,
+        name: b.querySelector("#bName").value.trim(),
+        platform: b.querySelector("#bPlatform").value,
+        bind_up: r.name,
+        style: b.querySelector("#bStyle").value.trim(),
+        example: b.querySelector("#bExample").value.trim(),
+      };
+      if (!payload.name) { S.toast("请填写 Skill 名称", "err"); return false; }
+      await S.api("/skills/save", { method: "POST", body: payload });
+      S.toast(cur ? "Skill 已更新" : "已创建 Skill 并绑定", "ok");
+      loadSkills(); load();
+    },
+  });
+  const ub = dlg.bodyEl.querySelector("#bUnbind");
+  if (ub) ub.onclick = async () => {
+    await S.api("/creators/bind", { method: "POST", body: { skill_id: cur.id, creator: "" } });
+    S.toast("已解绑", "ok");
+    dlg.close();
+    loadSkills(); load();
+  };
+}
+
+function editModal(r = { status: "active" }) {
+  S.modal({
+    title: r.id ? `编辑 · ${r.name}` : "新增 UP主",
+    body: `
+      <div class="form-row"><label>昵称 *</label><input maxlength="128" id="eName" value="${S.esc(r.name || "")}"></div>
+      <div class="form-grid">
+        <div class="form-row"><label>BIT窗口</label><input id="eBit" value="${S.esc(r.bit_window || "")}"></div>
+        <div class="form-row"><label>账号等级</label><input id="eLevel" value="${S.esc(r.account_level || "")}"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-row"><label>运营人员</label><input id="eOperator" value="${S.esc(r.operator || "")}"></div>
+        <div class="form-row"><label>出镜人</label><input id="ePresenter" value="${S.esc(r.presenter || "")}"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-row"><label>组别</label><input id="eGroup" value="${S.esc(r.team_group || "")}"></div>
+        <div class="form-row"><label>账号绑定公司</label><input id="eCompany" value="${S.esc(r.bound_company || "")}"></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-row"><label>商务微信</label><input id="eWechat" value="${S.esc(r.business_wechat || "")}"></div>
+        <div class="form-row"><label>商务邮箱</label><input id="eEmail" value="${S.esc(r.business_email || "")}"></div>
+      </div>
+      <div class="form-row"><label>合作状态</label>
+        <select id="eStatus">
+          ${Object.entries(STATUS_BADGE).map(([k, [label]]) =>
+            `<option value="${k}" ${r.status === k ? "selected" : ""}>${label}</option>`).join("")}
+        </select></div>
+      <div class="form-row"><label>运营备注</label>
+        <textarea id="eNote">${S.esc(r.note || "")}</textarea></div>`,
+    okText: "保存",
+    onOk: async (b) => {
+      if (!b.querySelector("#eName").value.trim()) { S.toast("请填写昵称", "err"); return false; }
+      const saved = await S.api("/creators/save", { method: "POST", body: {
+        id: r.id,
+        name: b.querySelector("#eName").value.trim(),
+        bit_window: b.querySelector("#eBit").value.trim(),
+        account_level: b.querySelector("#eLevel").value.trim(),
+        operator: b.querySelector("#eOperator").value.trim(),
+        presenter: b.querySelector("#ePresenter").value.trim(),
+        team_group: b.querySelector("#eGroup").value.trim(),
+        bound_company: b.querySelector("#eCompany").value.trim(),
+        business_wechat: b.querySelector("#eWechat").value.trim(),
+        business_email: b.querySelector("#eEmail").value.trim(),
+        status: b.querySelector("#eStatus").value,
+        note: b.querySelector("#eNote").value.trim(),
+      }});
+      const synced = Number(saved.updated_accounts || 0);
+      S.toast(r.id && synced ? `已保存，已同步 ${synced} 个平台账号` : (r.id ? "已保存" : "UP主已新增"), "ok");
+      if (!r.id) {
+        ["fPlatform", "fStatus", "fQ"].forEach(id => S.$(id).value = "");
+        page = 1;
+      }
+      load();
+    },
+  });
+}
+
+S.$("addBtn").onclick = () => editModal();
+S.$("searchBtn").onclick = () => { page = 1; load(); };
+S.$("resetBtn").onclick = () => {
+  ["fPlatform", "fStatus", "fQ"].forEach(id => S.$(id).value = "");
+  page = 1; load();
+};
+S.$("fQ").addEventListener("keydown", e => { if (e.key === "Enter") { page = 1; load(); } });
+
+S.$("syncBtn").onclick = async (e) => {
+  const btn = e.target;
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 同步中';
+  try {
+    const r = await S.api("/creators/sync", { method: "POST" });
+    S.toast(`同步完成,新发现 ${r.added} 位 UP主`, "ok");
+    page = 1; load();
+  } catch (err) { S.toast(err.message, "err"); }
+  btn.disabled = false; btn.textContent = "🔄 同步账号数据";
+};
+
+loadSkills();
+load();
+</script>
+{% endblock %}

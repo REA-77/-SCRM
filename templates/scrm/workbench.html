@@ -1,0 +1,246 @@
+{% extends "scrm/base.html" %}
+{% block title %}智能分析工作台{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>🤖 智能分析工作台</h2>
+    <div class="sub">集中处理待分析评论队列,人工确认情感 / 意向标签与推荐回复</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">📊 各平台分析进度</div>
+  <div class="table-wrap">
+    <table class="data" id="statTable">
+      <thead><tr>
+        <th>平台</th><th class="right">待分析</th><th class="right">已分析</th>
+        <th class="right">分析率</th><th class="right">负面</th><th class="right">购买意向</th>
+        <th style="width:200px;">进度</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mt16">
+  <div class="card-title">🧭 人工校准概览</div>
+  <div class="grid cards-4" id="calibrationCards">
+    <div><div class="sub2">已分析评论</div><div class="stat-value" id="calAnalyzed">—</div></div>
+    <div><div class="sub2">已校准评论</div><div class="stat-value" id="calCorrected">—</div></div>
+    <div><div class="sub2">校准覆盖率</div><div class="stat-value" id="calCoverage">—</div></div>
+    <div><div class="sub2">主要校准原因</div><div class="stat-value" id="calReason">—</div></div>
+  </div>
+  <div class="sub2" id="calReasonStats" style="margin-top:12px;"></div>
+</div>
+
+<div class="card mt16">
+  <div class="card-title">最近人工校准</div>
+  <div class="table-wrap"><table class="data"><thead><tr>
+    <th>平台</th><th>评论</th><th>模型结果</th><th>人工结果</th><th>校准原因</th><th>时间</th>
+  </tr></thead><tbody id="calibrationBody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody></table></div>
+</div>
+
+<div class="card mt16">
+  <div class="tabs">
+    <button data-tab="pending" class="active">⏳ 待分析队列 <span class="n" id="nPending">—</span></button>
+    <button data-tab="done">✅ 已分析结果 <span class="n" id="nDone">—</span></button>
+  </div>
+
+  <div class="filter-bar" style="box-shadow:none;border:1px solid var(--border);flex-wrap:wrap;">
+    <select id="fPlatform">
+      <option value="">全部平台</option>
+      <option>抖音</option><option>视频号</option><option>小红书</option>
+      <option>B站</option><option>快手</option><option>微博</option>
+    </select>
+    <input type="date" id="fStart" title="评论时间从">
+    <span class="muted">至</span>
+    <input type="date" id="fEnd" title="评论时间到">
+    <select id="fIntent" title="购买意向">
+      <option value="">全部意向</option>
+      <option value="1">有意向</option>
+      <option value="0">无意向</option>
+    </select>
+    <select id="fReply" title="回复推荐状态">
+      <option value="">全部回复状态</option>
+      <option value="ready">已生成回复</option>
+      <option value="failed">分析失败</option>
+      <option value="none">无回复</option>
+    </select>
+    <select id="fSize" title="每页数量">
+      <option value="10">10 条/页</option>
+      <option value="20" selected>20 条/页</option>
+      <option value="50">50 条/页</option>
+      <option value="100">100 条/页</option>
+    </select>
+    <div class="spacer"></div>
+    <button class="btn primary" id="batchBtn">⚡ 批量分析选中</button>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data">
+      <thead><tr>
+        <th style="width:36px;"><input type="checkbox" id="checkAll" title="全选本页"></th>
+        <th style="width:70px;">平台</th>
+        <th>评论</th>
+        <th style="width:110px;">评论人</th>
+        <th style="width:90px;">情感</th>
+        <th style="width:90px;">意向</th>
+        <th>AI 推荐回复</th>
+        <th style="width:160px;">操作</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="pager" id="pager"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let tab = "pending", page = 1, size = 20, statsRows = [];async function loadStats() {
+  // 用 tab 数据之外单独请求一次 pending 汇总
+  const d = await S.api("/workbench?tab=pending&page=1&size=1");
+  statsRows = d.stats || [];
+  let totalPending = 0, totalDone = 0;
+  S.$("statTable").querySelector("tbody").innerHTML = statsRows.map(s => {
+    const p = Number(s.pending || 0), a = Number(s.analyzed || 0);
+    totalPending += p; totalDone += a;
+    const sum = p + a;
+    const rate = sum ? Math.round(a * 100 / sum) : 0;
+    return `<tr>
+      <td>${S.platformTag(s.platform)}</td>
+      <td class="right">${p ? `<b style="color:var(--amber)">${p.toLocaleString()}</b>` : 0}</td>
+      <td class="right">${a.toLocaleString()}</td>
+      <td class="right">${rate}%</td>
+      <td class="right" style="color:var(--red);">${Number(s.neg || 0).toLocaleString()}</td>
+      <td class="right" style="color:var(--amber);">${Number(s.intent || 0).toLocaleString()}</td>
+      <td><div style="background:#eef0f5;border-radius:6px;height:8px;overflow:hidden;">
+        <div style="width:${rate}%;background:var(--primary);height:100%;"></div></div></td>
+    </tr>`;
+  }).join("");
+  S.$("nPending").textContent = totalPending.toLocaleString();
+  S.$("nDone").textContent = totalDone.toLocaleString();
+  const c = d.calibration || {};
+  S.$("calAnalyzed").textContent = Number(c.analyzed || 0).toLocaleString();
+  S.$("calCorrected").textContent = Number(c.corrected || 0).toLocaleString();
+  S.$("calCoverage").textContent = `${Number(c.coverage || 0)}%`;
+  const rs = c.reason_stats || [];
+  S.$("calReason").textContent = rs.length ? `${rs[0].reason} (${rs[0].total})` : "暂无";
+  S.$("calReasonStats").textContent = rs.length ? rs.map(x => `${x.reason}: ${x.total}`).join("　·　") : "暂无校准记录";
+  loadCalibrations();
+}
+
+async function loadCalibrations() {
+  try {
+    const d = await S.api("/workbench/calibrations?page=1&size=10");
+    S.$("calibrationBody").innerHTML = d.rows.length ? d.rows.map(r => `<tr>
+      <td>${S.platformTag(r.platform)}</td><td class="cell-content"><div class="clamp">${S.esc(r.content || "(空评论)")}</div><div class="sub2">${S.esc(r.context_title || "未命名内容")} · ${S.esc(r.src_table)} #${r.src_pk}</div></td>
+      <td>${S.esc((r.model_sentiment || "") + " " + (r.model_intents || []).join("、"))}</td>
+      <td>${S.esc((r.corrected_sentiment || "") + " " + (r.corrected_intents || []).join("、"))}</td>
+      <td>${S.esc(r.correction_reason || "")}</td><td class="muted">${S.fmtTs(r.created_ts)}</td>
+    </tr>`).join("") : '<tr><td colspan="6" class="muted">暂无校准记录</td></tr>';
+  } catch (e) { S.$("calibrationBody").innerHTML = '<tr><td colspan="6" class="muted">暂无法读取校准数据</td></tr>'; }
+}
+
+async function load() {
+  const p = new URLSearchParams({ tab, page, size });
+  if (S.$("fPlatform").value) p.set("platform", S.$("fPlatform").value);
+  if (S.$("fStart").value) p.set("start", S.$("fStart").value);
+  if (S.$("fEnd").value) p.set("end", S.$("fEnd").value);
+  if (S.$("fIntent").value) p.set("intent", S.$("fIntent").value);
+  if (S.$("fReply").value) p.set("reply_status", S.$("fReply").value);
+  S.$("tbody").innerHTML = `<tr><td colspan="8" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  const d = await S.api("/workbench?" + p.toString());
+  if (!d.rows.length) {
+    S.$("tbody").innerHTML = `<tr><td colspan="8"><div class="empty"><div class="big">${tab === "pending" ? "✨" : "📭"}</div>${tab === "pending" ? "队列已清空,所有评论均已分析" : "暂无分析结果"}</div></td></tr>`;
+  } else {
+    // 待分析行 + 已分析中分析失败的行都允许勾选(批量分析/批量重试)
+    const isFailed = r => !!(r.reply && String(r.reply).startsWith("⚠"));
+    S.$("tbody").innerHTML = d.rows.map(r => `
+      <tr class="${r.neg ? "row-neg" : r.intent ? "row-intent" : ""}" data-table="${r.src_table}" data-id="${r.src_pk}">
+        <td>${tab === "pending" || isFailed(r) ? `<input type="checkbox" class="row-check" data-table="${r.src_table}" data-id="${r.src_pk}">` : ""}</td>
+        <td>${S.platformTag(r.platform)}</td>
+        <td class="cell-content">
+          <a href="/scrm/comments/${r.src_table}/${r.src_pk}"><div class="clamp">${S.esc(r.content)}</div></a>
+          <div class="sub2">${S.ago(r.ctime)} · <span class="mono">${S.esc(r.content_id || "")}</span></div>
+        </td>
+        <td class="nowrap">${S.esc(r.nickname || "匿名")}</td>
+        <td>${tab === "pending" ? '<span class="muted">—</span>' :
+              (r.neg ? S.badge("负面", "red", true) : S.badge("正常", "green"))}</td>
+        <td>${tab === "pending" ? '<span class="muted">—</span>' :
+              (r.intent ? S.badge("有意向", "amber", true) : '<span class="muted">—</span>')}</td>
+        <td class="cell-content">${tab === "pending"
+            ? '<span class="muted">分析后自动生成</span>'
+            : (r.reply && !String(r.reply).startsWith("⚠")
+                ? `<div class="clamp">${S.esc(r.reply)}</div>`
+                : r.reply
+                    ? `<span class="badge red">分析失败</span> <span class="muted" style="font-size:12px;">AI 额度不足或网络异常</span>`
+                    : '<span class="muted">—</span>')}</td>
+        <td class="nowrap">
+          ${tab === "pending"
+            ? `<button class="btn sm primary" onclick="analyzeOne('${r.src_table}',${r.src_pk},this)">⚡ 分析</button>`
+            : (r.reply && String(r.reply).startsWith("⚠")
+                ? `<button class="btn sm" onclick="analyzeOne('${r.src_table}',${r.src_pk},this)">🔄 重试</button>`
+                : `<a class="btn sm" href="/scrm/analysis/reply/${r.src_table}/${r.src_pk}">✍️ 回复</a>`)}
+          <a class="btn sm" href="/scrm/comments/${r.src_table}/${r.src_pk}">详情</a>
+        </td>
+      </tr>`).join("");
+    S.$("checkAll").checked = false;
+  }
+  S.pager(S.$("pager"), d.total, page, size, x => { page = x; load(); });
+}
+
+window.analyzeOne = async (table, id, btn) => {
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span>'; }
+  try {
+    const res = await S.api(`/comment/${table}/${id}/analyze`, { method: "POST" });
+    S.toast(`分析完成:${res.negative ? "负面 · " : ""}${res.intent ? "购买意向" : "无明显意向"}`, "ok");
+    await Promise.all([load(), loadStats()]);
+  } catch (e) {
+    S.toast(e.message, "err");
+    if (btn) { btn.disabled = false; btn.textContent = "⚡ 分析"; }
+  }
+};
+
+// 全选本页(待分析队列 + 已分析中失败的行)
+S.$("checkAll").onclick = () => {
+  S.$$(".row-check").forEach(c => { c.checked = S.$("checkAll").checked; });
+};
+
+S.$("batchBtn").onclick = async () => {
+  const checked = S.$$(".row-check").filter(c => c.checked);
+  if (!checked.length) return S.toast("请先勾选要分析的评论");
+  S.$("batchBtn").disabled = true;
+  const original = S.$("batchBtn").textContent;
+  let ok = 0, fail = 0;
+  for (const c of checked) {
+    S.$("batchBtn").innerHTML = `<span class="spin"></span> ${ok + fail}/${checked.length}`;
+    try {
+      await S.api(`/comment/${c.dataset.table}/${c.dataset.id}/analyze`, { method: "POST" });
+      ok++;
+      c.closest("tr").style.opacity = ".4";
+      c.disabled = true;
+    } catch (e) { fail++; }
+  }
+  S.$("batchBtn").disabled = false;
+  S.$("batchBtn").textContent = original;
+  S.toast(`批量分析完成:成功 ${ok} 条${fail ? `,失败 ${fail} 条` : ""}`, fail ? "err" : "ok");
+  load(); loadStats();
+};
+
+S.$$(".tabs button").forEach(b => b.onclick = () => {
+  S.$$(".tabs button").forEach(x => x.classList.remove("active"));
+  b.classList.add("active");
+  tab = b.dataset.tab; page = 1; load();
+});
+S.$("fPlatform").onchange = () => { page = 1; load(); };
+S.$("fStart").onchange = () => { page = 1; load(); };
+S.$("fEnd").onchange = () => { page = 1; load(); };
+S.$("fIntent").onchange = () => { page = 1; load(); };
+S.$("fReply").onchange = () => { page = 1; load(); };
+S.$("fSize").onchange = () => { size = Number(S.$("fSize").value); page = 1; load(); };
+
+loadStats();
+load();
+</script>
+{% endblock %}

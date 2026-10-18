@@ -1,22 +1,39 @@
 # -*- coding: utf-8 -*-
 """评论 AI 分析守护进程
-- 后台轮询所有评论表 analyzed=0 的记录
-- 调 DeepSeek 判断负面 + 生成 10-50 字回复
-- 回写 analyzed/negative_alert/reply_suggestion
+- 事件驱动式快扫:每 ANALYZE_INTERVAL 秒轮询所有评论表 analyzed=0 的记录(小批量)
+- 每 ANALYZE_FULL_SWEEP 秒做一次全量补扫,清完快扫批次外的遗留
+- 自动分析只处理最近 ANALYZE_MAX_AGE_DAYS 天内的评论(手动分析不受限)
+- 调 DeepSeek 一次完成负面判断 + 购买意向判断 + 生成 10-50 字回复
+- 回写 analyzed/negative_alert/purchase_intent/reply_suggestion
 """
 import json
 import time
 import logging
 import requests
+from pymysql.err import OperationalError
 
 from config import (
     DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL,
-    ANALYZE_INTERVAL, ANALYZE_BATCH, ANALYZE_MAX_TOKENS, ANALYZE_TEMPERATURE,
-    COMMENT_TABLES, FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_CHAT_ID,
+    ANALYZE_INTERVAL, ANALYZE_BATCH, ANALYZE_FULL_SWEEP, ANALYZE_MAX_AGE_DAYS,
+    ANALYZE_MAX_TOKENS, ANALYZE_TEMPERATURE,
+    COMMENT_TABLES, FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_CHAT_ID, FEISHU_ALERT_ENABLED,
 )
 from db import get_conn
 
 logger = logging.getLogger("analyzer")
+
+# 各评论表的业务时间列(create_time 多为秒;add_ts 部分平台为毫秒,过滤时统一归一化)
+_TABLE_TIME_COL = {
+    "bilibili_video_comment": "create_time",
+    "channels_video_comment": "create_time",
+    "douyin_aweme_comment": "create_time",
+    "kuaishou_video_comment": "create_time",
+    "weibo_note_comment": "create_time",
+    "xhs_note_comment": "create_time",
+    "zhihu_comment": "add_ts",
+    "tieba_comment": "add_ts",
+    "reddit_comment": "add_ts",
+}
 
 SYSTEM_PROMPT = """你是一位互联网冲浪选手,同时具备家电测评专家的专业性,语气温和礼貌。
 根据用户给出的评论,做三件事:
@@ -80,25 +97,55 @@ def call_deepseek(content):
 _NO_NICKNAME_TABLES = set()  # 记录不含 nickname 列的评论表
 
 
-def get_unanalyzed(table, limit):
+def get_unanalyzed(table, limit, after_id=0, through_id=None):
     cols = "`id`, `content`" if table in _NO_NICKNAME_TABLES else "`id`, `content`, `nickname`"
-    sql = f"SELECT {cols} FROM `{table}` WHERE `analyzed`=0 AND IFNULL(`handled`,0)=0 ORDER BY `id`"
-    if limit and limit > 0:
-        sql += " LIMIT %s"
-        params = (limit,)
-    else:
-        params = ()
+    sql = f"SELECT {cols} FROM `{table}` WHERE `analyzed`=0 AND IFNULL(`handled`,0)=0 AND `id`>%s"
+    params = [after_id]
+    if through_id is not None:
+        sql += " AND `id`<=%s"
+        params.append(through_id)
+    # 自动分析默认只处理最近 N 天内的评论(0=不限制);时间未知(0/NULL)的不跳过
+    if ANALYZE_MAX_AGE_DAYS and ANALYZE_MAX_AGE_DAYS > 0:
+        col = _TABLE_TIME_COL.get(table, "create_time")
+        cutoff = int(time.time()) - int(ANALYZE_MAX_AGE_DAYS) * 86400
+        sql += (f" AND (IFNULL(`{col}`,0)=0 OR (CASE WHEN `{col}` > 100000000000"
+                f" THEN ROUND(`{col}`/1000) ELSE `{col}` END) >= %s)")
+        params.append(cutoff)
+    sql += " ORDER BY `id` LIMIT %s"
+    params.append(min(500, max(1, int(limit or 100))))
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, params)
+                cur.execute(sql, tuple(params))
                 return cur.fetchall()
-    except Exception:
+    except OperationalError as exc:
         # 部分评论表无 nickname 列,降级后重试一次
-        if table not in _NO_NICKNAME_TABLES:
+        if exc.args[0] == 1054 and 'nickname' in str(exc) and table not in _NO_NICKNAME_TABLES:
             _NO_NICKNAME_TABLES.add(table)
-            return get_unanalyzed(table, limit)
+            return get_unanalyzed(table, limit, after_id, through_id)
         raise
+
+
+def iter_unanalyzed(table, batch):
+    """Full sweeps use bounded ID pages; committed analyzed flags survive restarts."""
+    through_id = None
+    if batch == 0:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT MAX(id) AS last_id FROM `{table}`")
+                through_id = cur.fetchone()['last_id']
+        if through_id is None:
+            return
+    after_id = 0
+    while True:
+        rows = get_unanalyzed(table, batch or 100, after_id, through_id)
+        if not rows:
+            return
+        yield from rows
+        after_id = rows[-1]['id']
+        if batch != 0:
+            return
+        del rows
 
 
 # ---------- 飞书自建应用发送(负面预警)----------
@@ -141,6 +188,8 @@ def _post_feishu_text(text):
 def send_feishu_alert(alerts):
     """每轮结束后汇总负面评论,发一条(过长时分多条)消息到目标群聊
     alerts: [{"table","id","nickname","content","reply"}, ...]"""
+    if not FEISHU_ALERT_ENABLED:
+        return
     if not alerts or not (FEISHU_APP_ID and FEISHU_APP_SECRET and FEISHU_CHAT_ID):
         return
     # 分表统计
@@ -193,20 +242,25 @@ def mark_analyzed(table, rid, is_negative, has_intent, reply, failed=False):
         conn.commit()
 
 
-def scan_all():
-    """扫描所有评论表一轮,返回本轮处理条数"""
+def scan_all(batch=None):
+    """扫描所有评论表;0 表示分批补扫至本轮开始时的最大 ID。"""
+    if batch is None:
+        batch = ANALYZE_BATCH
     processed = 0
     alerts = []
     for table in COMMENT_TABLES:
         try:
-            rows = get_unanalyzed(table, ANALYZE_BATCH)
+            rows = iter_unanalyzed(table, batch)
+            # Prime the generator inside the query error handler.
+            first = next(rows, None)
         except Exception as e:
             logger.warning("查询 %s 未分析评论失败: %s", table, e)
             continue
-        if not rows:
+        if first is None:
             continue
         status.processing = True
-        for row in rows:
+        from itertools import chain
+        for row in chain((first,), rows):
             status.last_table = f"{table}#{row['id']}"
             content = (row.get("content") or "")[:500]
             if not content.strip():
@@ -231,6 +285,9 @@ def scan_all():
                         "content": content,
                         "reply": reply,
                     })
+                    if len(alerts) >= 30:
+                        send_feishu_alert(alerts)
+                        alerts.clear()
             processed += 1
         status.processing = False
     send_feishu_alert(alerts)
@@ -238,16 +295,24 @@ def scan_all():
 
 
 def analyzer_loop():
-    """守护循环"""
+    """守护循环:快扫(事件驱动式,小批量) + 定时全量补扫"""
     status.running = True
     status.started_at = time.time()
-    logger.info("评论分析守护进程启动,间隔 %ss,每轮每表 %s 条", ANALYZE_INTERVAL, ANALYZE_BATCH)
+    logger.info("评论分析守护进程启动,快扫间隔 %ss/每表 %s 条,全量补扫每 %ss",
+                ANALYZE_INTERVAL, ANALYZE_BATCH, ANALYZE_FULL_SWEEP)
+    next_full_sweep = time.time() + ANALYZE_FULL_SWEEP
     while True:
         try:
-            scan_all()
+            if time.time() >= next_full_sweep:
+                scan_all(batch=0)  # 全量补扫,一轮清完所有遗留
+                next_full_sweep = time.time() + ANALYZE_FULL_SWEEP
+            else:
+                scan_all()
         except Exception as e:
             logger.exception("守护循环异常: %s", e)
             status.last_error = str(e)[:200]
+        finally:
+            status.processing = False
         time.sleep(ANALYZE_INTERVAL)
 
 

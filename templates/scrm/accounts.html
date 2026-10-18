@@ -1,0 +1,325 @@
+{% extends "scrm/base.html" %}
+{% block title %}平台运营账号{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>📱 平台运营账号</h2>
+    <div class="sub">公司在各平台自营的官方账号矩阵;每个账号可关联到一个 UP 主档案</div>
+  </div>
+  <div class="actions">
+    <button class="btn" id="updateCookieBtn" disabled>更新 Cookie并检测（0）</button>
+    <button class="btn primary" id="addBtn">➕ 新增账号</button>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <a class="btn" href="/scrm/account-management">账号管理首页</a>
+  <a class="btn" href="/scrm/creators">UP主管理</a>
+  <a class="btn primary" href="/scrm/accounts">平台运营账号</a>
+</div>
+
+<div class="filter-bar">
+  <input id="fQ" placeholder="昵称 / ID / 所属UP主">
+  <select id="fPlatform"><option value="">全部平台</option></select>
+  <select id="fStatus">
+    <option value="">全部状态</option>
+    <option value="active">运营中</option>
+    <option value="paused">已暂停</option>
+    <option value="retired">已停用</option>
+  </select>
+  <select id="fCookieStatus" aria-label="筛选 Cookie 状态">
+    <option value="">全部 Cookie 状态</option>
+    <option value="expired">已失效</option>
+    <option value="valid">有效</option>
+    <option value="missing">未配置</option>
+    <option value="unknown">待确认</option>
+  </select>
+  <select id="fBitWindow" aria-label="筛选比特窗口号">
+    <option value="">全部比特窗口</option>
+    <option value="present">比特窗口号不为空</option>
+  </select>
+  <button class="btn primary" id="searchBtn">🔍 搜索</button>
+  <button class="btn" id="resetBtn">重置</button>
+</div>
+
+<div class="sub" style="margin-bottom:8px;">更新 Cookie 后会立即检测登录状态。Cookie 状态为最近检测结果；待确认表示尚未检测、检测受限或平台暂不支持。</div>
+<div id="cookieProgress" class="sub" role="status" aria-live="polite" style="height:88px;overflow-y:auto;margin-bottom:12px;"></div>
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th style="width:40px;"><input type="checkbox" id="selectAll" aria-label="全选当前页账号"></th>
+          <th style="width:70px;">平台</th>
+          <th style="width:160px;">昵称</th>
+          <th style="width:150px;">所属UP主</th>
+          <th style="width:130px;">账号ID</th>
+          <th style="width:80px;">粉丝</th>
+          <th style="width:70px;">状态</th>
+          <th style="width:130px;">Cookie 状态</th>
+          <th style="width:70px;">视频</th>
+          <th style="width:125px;">最近更新时间</th>
+          <th style="width:105px;">本月更新视频数</th>
+          <th style="width:110px;">Bit窗口</th>
+          <th style="width:130px;">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"><tr><td colspan="13"><span class="spin"></span> 加载中…</td></tr></tbody>
+    </table>
+  </div>
+  <div id="pager" style="padding:10px 16px;border-top:1px solid #f3f4f6;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let rows = [], page = 1, total = 0, size = 20, platforms = [], creators = [];
+const selectedAccounts = new Map();
+let syncingCookies = false;
+let loadVersion = 0;
+const accountKey = r => JSON.stringify([r.platform, r.nickname]);
+
+function updateSelection() {
+  const count = rows.filter(r => selectedAccounts.has(accountKey(r))).length;
+  S.$("selectAll").checked = rows.length > 0 && count === rows.length;
+  S.$("selectAll").indeterminate = count > 0 && count < rows.length;
+  S.$("selectAll").disabled = syncingCookies || !rows.length;
+  S.$("updateCookieBtn").disabled = syncingCookies || !selectedAccounts.size;
+  S.$("updateCookieBtn").textContent = syncingCookies ? "正在更新并检测…" : `更新 Cookie并检测（${selectedAccounts.size}）`;
+  S.$$('.account-select').forEach(box => {
+    box.checked = selectedAccounts.has(accountKey(rows[Number(box.dataset.i)]));
+    box.disabled = syncingCookies;
+  });
+}
+
+S.$("selectAll").onchange = e => {
+  rows.forEach(r => {
+    if (e.target.checked) selectedAccounts.set(accountKey(r), {platform: r.platform, nickname: r.nickname});
+    else selectedAccounts.delete(accountKey(r));
+  });
+  updateSelection();
+};
+S.$("updateCookieBtn").onclick = async () => {
+  if (syncingCookies || !selectedAccounts.size) return;
+  const accounts = [...selectedAccounts.values()];
+  syncingCookies = true;
+  updateSelection();
+  let success = 0;
+  const results = [];
+  const failures = [];
+  try {
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      S.$("cookieProgress").textContent = `正在更新 ${i + 1}/${accounts.length}：${account.platform} · ${account.nickname}，请等待窗口打开…`;
+      try {
+        const result = await S.api("/accounts/update-cookie", {method: "POST", body: account});
+        updateCookieCell(account, result);
+        success++;
+        selectedAccounts.delete(accountKey(account));
+        const label = cookieLabels[result.cookie_status] || cookieLabels.unknown;
+        results.push(`${account.platform} · ${account.nickname}：${label[0]}，${result.message || "已完成检测"}`);
+      } catch (e) {
+        failures.push(`${account.platform} · ${account.nickname}：${e.message}`);
+      }
+    }
+    S.$("cookieProgress").innerHTML = `已完成：成功 ${success}，失败 ${failures.length}。` +
+      `<ul>${results.map(r => `<li>${S.esc(r)}</li>`).join("")}</ul>` +
+      (failures.length ? `<div>失败账号保留勾选，可重试。</div><ul>${failures.map(f => `<li>${S.esc(f)}</li>`).join("")}</ul>` : "");
+  } finally {
+    syncingCookies = false;
+    updateSelection();
+  }
+};
+
+const cookieLabels = {valid: ["有效", "green"], expired: ["已失效", "red"],
+  missing: ["未配置", "gray"], unknown: ["待确认", "orange"]};
+function cookieBadge(r) {
+  const label = cookieLabels[r.cookie_status] || cookieLabels.unknown;
+  const detail = [r.cookie_check_message || "尚未检测", r.cookie_checked_at ? `最近检测：${S.fmtTs(r.cookie_checked_at)}` : ""].filter(Boolean).join("；");
+  return `<span title="${S.esc(detail)}">${S.badge(label[0], label[1])}</span>`;
+}
+
+function updateCookieCell(account, result) {
+  const index = rows.findIndex(r => accountKey(r) === accountKey(account));
+  if (index < 0) return;
+  const row = rows[index];
+  row.cookie_status = result.cookie_status || "unknown";
+  row.cookie_check_message = result.message || "";
+  row.cookie_checked_at = result.cookie_checked_at || null;
+  const cell = S.$("tbody").querySelector(`[data-cookie-index="${index}"]`);
+  if (cell) cell.innerHTML = cookieBadge(row);
+}
+
+async function checkVisibleCookies(version) {
+  const pending = rows.filter(r => r.cookie_status !== "missing" &&
+    (!r.cookie_checked_at || Date.now() / 1000 - r.cookie_checked_at > 1800));
+  for (const r of pending) {
+    if (version !== loadVersion || syncingCookies) return;
+    try {
+      const result = await S.api("/accounts/check-cookie", {method: "POST", body: {platform: r.platform, nickname: r.nickname}});
+      if (version !== loadVersion || syncingCookies) return;
+      updateCookieCell(r, result);
+    } catch (e) { /* Keep the last known status if the service cannot be reached. */ }
+  }
+}
+
+function fmtFans(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  const n = Number(v);
+  if (isNaN(n)) return S.esc(String(v));
+  if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, "") + "w";
+  return n.toLocaleString();
+}
+
+function statusBadge(s) {
+  const map = { active: ["运营中", "green"], paused: ["已暂停", "orange"], retired: ["已停用", "gray"] };
+  const m = map[s] || [s || "—", "gray"];
+  return S.badge(m[0], m[1]);
+}
+
+function editModal(m) {
+  const isNew = !m;
+  m = m || {};
+  const platOpts = platforms.map(p =>
+    `<option value="${S.esc(p)}" ${p === m.platform ? "selected" : ""}>${S.esc(p)}</option>`).join("");
+  const creatorOpts = ["<option value=''>未关联</option>"].concat(creators.map(c =>
+    `<option value="${c.id}" ${Number(c.id) === Number(m.creator_id) ? "selected" : ""}>${S.esc(c.name)}</option>`)).join("");
+  S.modal({
+    title: isNew ? "新增运营账号" : `编辑账号 · ${m.nickname}`,
+    body: `
+      <div class="form-row"><label>平台 *</label>
+        <select id="mPlatform">${platOpts}</select>
+        <input id="mNewPlat" placeholder="或输入新平台名" style="margin-top:6px;">
+      </div>
+      <div class="form-row"><label>昵称 *</label><input id="mNick" value="${S.esc(m.nickname || "")}"></div>
+      <div class="form-row"><label>所属UP主</label><select id="mCreator">${creatorOpts}</select></div>
+      <div class="form-row"><label>账号ID</label><input id="mAccId" value="${S.esc(m.account_id || "")}"></div>
+      <div class="form-row"><label>粉丝量</label><input id="mFans" value="${m.fans ? S.esc(String(m.fans)) : ""}" placeholder="支持 1.2w / 3万 / 5000"></div>
+      <div class="form-row"><label>Bit窗口</label><input id="mBit" value="${S.esc(m.bit_window || "")}"></div>
+      <div class="form-row"><label>状态</label>
+        <select id="mStatus">
+          <option value="active" ${(!m.status || m.status === "active") ? "selected" : ""}>运营中</option>
+          <option value="paused" ${m.status === "paused" ? "selected" : ""}>已暂停</option>
+          <option value="retired" ${m.status === "retired" ? "selected" : ""}>已停用</option>
+        </select>
+      </div>
+      <div class="form-row"><label>备注</label><textarea id="mNote">${S.esc(m.note || "")}</textarea></div>`,
+    okText: "保存",
+    onOk: async (body) => {
+      const newPlat = body.querySelector("#mNewPlat").value.trim();
+      const platform = newPlat || body.querySelector("#mPlatform").value;
+      const nickname = body.querySelector("#mNick").value.trim();
+      if (!platform) { S.toast("平台必填", "err"); return false; }
+      if (!nickname) { S.toast("昵称必填", "err"); return false; }
+      const payload = {
+        platform, nickname,
+        creator_id: body.querySelector("#mCreator").value,
+        account_id: body.querySelector("#mAccId").value.trim(),
+        fans: body.querySelector("#mFans").value.trim(),
+        bit_window: body.querySelector("#mBit").value.trim(),
+        status: body.querySelector("#mStatus").value,
+        note: body.querySelector("#mNote").value.trim(),
+      };
+      if (!isNew) { payload.old_platform = m.platform; payload.old_nickname = m.nickname; }
+      await S.api("/accounts/save", { method: "POST", body: payload });
+      S.toast(isNew ? "已新增账号" : "已保存", "ok");
+      load();
+    },
+  });
+}
+
+async function load(p, autoCheck = false) {
+  const version = ++loadVersion;
+  page = p || page || 1;
+  S.$("tbody").innerHTML = `<tr><td colspan="13" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  try {
+    const params = new URLSearchParams({ page, size });
+    const q = S.$("fQ").value.trim();
+    if (q) params.set("q", q);
+    const plat = S.$("fPlatform").value;
+    if (plat) params.set("platform", plat);
+    const st = S.$("fStatus").value;
+    if (st) params.set("status", st);
+    const cookieStatus = S.$("fCookieStatus").value;
+    if (cookieStatus) params.set("cookie_status", cookieStatus);
+    const bitWindow = S.$("fBitWindow").value;
+    if (bitWindow) params.set("bit_window", bitWindow);
+    const d = await S.api("/accounts?" + params.toString());
+    if (version !== loadVersion) return;
+    rows = d.rows; total = d.total; platforms = d.platforms || platforms; creators = d.creators || creators;
+    render();
+    renderPlatformFilter();
+    // 首屏只展示最近一次 Cookie 状态；检测通过“更新 Cookie并检测”按需执行。
+  } catch (e) {
+    if (version !== loadVersion) return;
+    S.$("tbody").innerHTML = `<tr><td colspan="13" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderPlatformFilter() {
+  const sel = S.$("fPlatform");
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">全部平台</option>' +
+    platforms.map(p => `<option value="${S.esc(p)}" ${p === cur ? "selected" : ""}>${S.esc(p)}</option>`).join("");
+}
+
+function render() {
+  if (!rows.length) {
+    S.$("tbody").innerHTML = `<tr><td colspan="13"><div class="empty"><div class="big">📱</div>暂无符合筛选条件的运营账号</div></td></tr>`;
+    S.$("pager").innerHTML = "";
+    updateSelection();
+    return;
+  }
+  S.$("tbody").innerHTML = rows.map((r, i) => `<tr>
+    <td><input type="checkbox" class="account-select" data-i="${i}" aria-label="选择 ${S.esc(r.nickname)}"></td>
+    <td>${S.platformTag(r.platform)}</td>
+    <td><div class="clamp" title="${S.esc(r.nickname || "")}">${S.esc(r.nickname || "—")}</div></td>
+    <td><div class="clamp" title="${S.esc(r.creator_name || "")}">${S.esc(r.creator_name || "未关联")}</div></td>
+    <td class="mono" style="font-size:12px;">${S.esc(r.account_id || "—")}</td>
+    <td class="mono">${fmtFans(r.fans)}</td>
+    <td>${statusBadge(r.status)}</td>
+    <td data-cookie-index="${i}">${cookieBadge(r)}</td>
+    <td class="mono">${r.video_count > 0 ? `<a href="/scrm/videos?platform=${encodeURIComponent(r.platform)}&up=${encodeURIComponent(r.nickname || "")}" style="color:#4f46e5;">${r.video_count}</a>` : "—"}</td>
+    <td class="mono" style="font-size:12px;">${r.latest_update_ts ? S.fmtTs(r.latest_update_ts) : "—"}</td>
+    <td class="mono">${r.month_video_count > 0 ? r.month_video_count.toLocaleString() : "—"}</td>
+    <td class="mono" style="font-size:12px;">${S.esc(r.bit_window || "—")}</td>
+    <td>
+      <button class="btn sm" data-act="edit" data-i="${i}">✏️ 编辑</button>
+      <button class="btn sm danger" data-act="del" data-i="${i}">删除</button>
+    </td>
+  </tr>`).join("");
+  S.$$('.account-select').forEach(box => box.onchange = () => {
+    const r = rows[Number(box.dataset.i)];
+    if (box.checked) selectedAccounts.set(accountKey(r), {platform: r.platform, nickname: r.nickname});
+    else selectedAccounts.delete(accountKey(r));
+    updateSelection();
+  });
+  updateSelection();
+  S.$$('button[data-act="edit"]').forEach(b => b.onclick = () => editModal(rows[Number(b.dataset.i)]));
+  S.$$('button[data-act="del"]').forEach(b => b.onclick = () => {
+    const r = rows[Number(b.dataset.i)];
+    S.confirm(`确认删除账号「${r.nickname}」(${r.platform})?`, async () => {
+      await S.api("/accounts/delete", { method: "POST", body: { platform: r.platform, nickname: r.nickname } });
+      S.toast("已删除", "ok"); load(1);
+    });
+  });
+  S.pager(S.$("pager"), total, page, size, p => load(p));
+}
+
+S.$("addBtn").onclick = () => editModal(null);
+S.$("searchBtn").onclick = () => load(1);
+S.$("resetBtn").onclick = () => {
+  S.$("fQ").value = ""; S.$("fPlatform").value = ""; S.$("fStatus").value = "";
+  S.$("fCookieStatus").value = "";
+  S.$("fBitWindow").value = "";
+  load(1);
+};
+S.$("fQ").addEventListener("keydown", e => { if (e.key === "Enter") load(1); });
+S.$("fPlatform").onchange = () => load(1);
+S.$("fStatus").onchange = () => load(1);
+S.$("fCookieStatus").onchange = () => load(1);
+S.$("fBitWindow").onchange = () => load(1);
+
+load(1);
+</script>
+{% endblock %}

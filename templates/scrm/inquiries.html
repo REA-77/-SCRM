@@ -1,0 +1,254 @@
+{% extends "scrm/base.html" %}
+{% block title %}商务询单{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>📨 商务询单</h2>
+    <div class="sub">同步飞书「商单询单表」,合作成功自动生成商单与合作媒介</div>
+  </div>
+  <div class="actions">
+    <span class="muted" style="font-size:12px;" id="lastSync"></span>
+    <button class="btn" id="addInquiryBtn">➕ 新增询单</button>
+    <button class="btn" id="sendWechatBtn">💬 发送微信</button>
+    <button class="btn primary" id="syncBtn">🔄 同步飞书询单</button>
+  </div>
+</div>
+
+<div class="stat-row" id="statRow"></div>
+
+<div class="filter-bar">
+  <select id="fStatus">
+    <option value="">全部状态</option>
+    <option>跟进中</option><option>有意向</option><option>未合作</option>
+    <option>无意向</option><option>合作成功</option>
+  </select>
+  <input id="fQ" placeholder="询单名称">
+  <input id="fBrand" placeholder="品牌">
+  <input id="fMedia" placeholder="媒介公司">
+  <input id="fSales" placeholder="商务组员">
+  <button class="btn primary" id="searchBtn">🔍 筛选</button>
+  <button class="btn" id="resetBtn">重置</button>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th style="width:36px;"><input type="checkbox" id="selectAllInquiries"></th>
+          <th style="width:170px;">询单名称</th>
+          <th style="width:90px;">品牌</th>
+          <th style="width:110px;">产品/品类</th>
+          <th style="width:96px;">媒介公司</th>
+          <th style="width:80px;">媒介新旧</th>
+          <th style="width:100px;">联系人</th>
+          <th style="width:80px;">商务</th>
+          <th style="width:110px;">合作类型</th>
+          <th style="width:130px;">平台账号</th>
+          <th style="width:90px;">沟通节点</th>
+          <th style="width:90px;">跟进超时</th>
+          <th style="width:110px;">询单时间</th>
+          <th style="width:130px;">更新时间</th>
+      <th style="width:140px;">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"><tr><td colspan="15"><span class="spin"></span> 加载中…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager" id="pager" style="padding:12px 14px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let page = 1, size = 20, total = 0, rows = [];
+const selectedInquiryIds = new Set();
+const STATUS_COLOR = {"跟进中":"gray", "有意向":"amber", "未合作":"teal", "无意向":"gray", "合作成功":"green"};
+const NODE_LABEL = {"跟进中":"询单", "有意向":"询单", "未合作":"无意向", "无意向":"无意向", "合作成功":"合作成功"};
+
+function params() {
+  const p = new URLSearchParams();
+  const v = (id) => S.$(id).value.trim();
+  if (v("fStatus")) p.set("status", v("fStatus"));
+  if (v("fQ")) p.set("q", v("fQ"));
+  if (v("fBrand")) p.set("brand", v("fBrand"));
+  if (v("fMedia")) p.set("media", v("fMedia"));
+  if (v("fSales")) p.set("sales", v("fSales"));
+  p.set("page", page); p.set("size", size);
+  return p;
+}
+
+let urlInitialized = false;
+async function load() {
+  if (!urlInitialized) {
+    const qs = new URLSearchParams(location.search);
+    if (qs.get("status")) S.$("fStatus").value = qs.get("status");
+    if (qs.get("q")) S.$("fQ").value = qs.get("q");
+    if (qs.get("brand")) S.$("fBrand").value = qs.get("brand");
+    urlInitialized = true;
+  }
+  S.$("tbody").innerHTML = `<tr><td colspan="15" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  try {
+    const d = await S.api("/inquiries?" + params().toString());
+    rows = d.rows; total = d.total;
+    renderStats(d);
+    if (d.last_sync) S.$("lastSync").textContent = "上次同步:" + S.fmtTs(d.last_sync);
+    render();
+    S.pager(S.$("pager"), total, page, size, p => { page = p; load(); });
+  } catch (e) {
+    S.$("tbody").innerHTML = `<tr><td colspan="15" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderStats(d) {
+  const cards = [
+    ["📨", "全部询单", d.total, "kpi-primary", "飞书商单询单表同步"],
+    ["⏳", "跟进中", d.by_status["跟进中"] || 0, "kpi-teal", "含未标记状态"],
+    ["🔥", "有意向", d.by_status["有意向"] || 0, "kpi-amber", "高优先级跟进"],
+    ["🤝", "合作成功", d.by_status["合作成功"] || 0, "kpi-green", "已自动生成商单/媒介"],
+  ];
+  S.$("statRow").innerHTML = `<div class="grid cards-4">` + cards.map(([ico, label, v, cls, foot]) =>
+    `<div class="card stat-card ${cls}">
+       <div class="kpi-ico">${ico}</div>
+       <div class="kpi-label">${label}</div>
+       <div class="kpi-value">${v}</div>
+       <div class="kpi-foot">${foot}</div>
+     </div>`).join("") + `</div>`;
+}
+
+function render() {
+  if (!rows.length) {
+    S.$("tbody").innerHTML = `<tr><td colspan="15"><div class="empty"><div class="big">📨</div>没有询单,点击右上角「同步飞书询单」拉取</div></td></tr>`;
+    return;
+  }
+  S.$("tbody").innerHTML = rows.map(r => `<tr>
+    <td><input type="checkbox" class="inq-select" data-id="${r.id}" ${selectedInquiryIds.has(Number(r.id)) ? "checked" : ""}></td>
+    <td><div class="clamp">${S.esc(r.name || "-")}</div><div class="sub2">#${S.esc(r.inquiry_no || "-")}</div></td>
+    <td>${S.esc(r.brand || "-")}</td>
+    <td><div class="clamp">${S.esc(r.product || "-")}</div><div class="sub2">${S.esc(r.category || "")}</div></td>
+    <td>${S.esc(r.media_company || "-")}</td>
+    <td>${r.media_exists ? S.badge("旧媒介", "gray") : S.badge("新媒介", "primary")}</td>
+    <td>${S.esc(r.contact || "-")}</td>
+    <td>${S.esc(r.sales || "-")}</td>
+    <td class="sub2">${S.esc(r.coop_types || "-")}</td>
+    <td><div class="clamp sub2" title="${S.esc(r.platform_accounts || "")}">${S.esc(r.platform_accounts || "-")}</div></td>
+    <td>
+      <select class="ist" data-id="${r.id}" style="font-size:12px;padding:3px 6px;">
+        ${["跟进中","有意向","未合作","无意向","合作成功"].map(s =>
+          `<option value="${s}" ${s === r.status ? "selected" : ""}>${s === r.status ? (r.follow_node || NODE_LABEL[s]) : NODE_LABEL[s]}</option>`).join("")}
+      </select>
+    </td>
+    <td>${r.follow_timeout_label ? S.badge(r.follow_timeout_label, "red", true) : S.badge("—", "gray")}</td>
+    <td class="nowrap muted">${S.fmtTs(r.inquiry_ts)}</td>
+    <td class="nowrap muted">${S.fmtTs(r.synced_ts)}</td>
+    <td>
+      <button class="btn sm primary" data-edit="${r.id}">编辑</button>
+      <button class="btn sm ghost" data-detail="${r.id}">详情</button>
+      ${r.deal_linked
+        ? `<a class="btn sm primary" href="/scrm/deals?q=${encodeURIComponent(r.name || "")}">商单</a>`
+        : `<button class="btn sm" disabled title="该询单尚未联动商单">商单</button>`}
+    </td>
+  </tr>`).join("");
+  S.$$(".inq-select").forEach(ch => ch.onchange = () => { const id = Number(ch.dataset.id); if (ch.checked) selectedInquiryIds.add(id); else selectedInquiryIds.delete(id); });
+  S.$("selectAllInquiries").checked = rows.length > 0 && rows.every(r => selectedInquiryIds.has(Number(r.id)));
+  S.$("selectAllInquiries").onchange = e => { rows.forEach(r => e.target.checked ? selectedInquiryIds.add(Number(r.id)) : selectedInquiryIds.delete(Number(r.id))); render(); };
+  S.$$(".ist").forEach(sel => sel.onchange = async () => {
+    try {
+      await S.api(`/inquiries/${sel.dataset.id}/status`, { method: "POST", body: { status: sel.value } });
+      S.toast(sel.value === "合作成功" ? "已标记合作成功,商单与合作媒介已自动生成" : "状态已更新", "ok");
+      load();
+    } catch (e) { S.toast(e.message, "err"); load(); }
+  });
+  S.$$('[data-detail]').forEach(b => b.onclick = () => {
+    const r = rows.find(x => x.id === Number(b.dataset.detail));
+    if (!r) return;
+    S.modal({title: "询单详情", okText: null, wide: true, body: `<div class="kvlist">${Object.entries(r).filter(([k]) => k !== "id" && k !== "media_exists").map(([k,v]) => `<div class="k">${S.esc(k)}</div><div class="v">${S.esc(v == null || v === "" ? "—" : v)}</div>`).join("")}</div>`});
+  });
+  S.$$('[data-edit]').forEach(b => b.onclick = () => {
+    const r = rows.find(x => x.id === Number(b.dataset.edit));
+    if (!r) return;
+    const field = (id, label, value, type="input") => `<div class="form-row"><label>${label}</label>${type === "textarea" ? `<textarea id="${id}">${S.esc(value || "")}</textarea>` : `<input id="${id}" value="${S.esc(value || "")}">`}</div>`;
+    S.modal({title: "编辑商务询单", wide: true, body: `
+      ${field("eName", "询单名称", r.name)}
+      ${field("eBrand", "品牌", r.brand)}
+      ${field("eProduct", "产品", r.product)}
+      ${field("eCategory", "品类", r.category)}
+      ${field("eMedia", "媒介公司", r.media_company)}
+      ${field("eAmount", "商单金额", r.amount)}
+      ${field("eRebate", "返点", r.rebate)}
+      ${field("eMediaAmount", "媒介金额", r.media_amount)}
+      ${field("eContact", "联系人", r.contact)}
+      ${field("eWechat", "联系人微信", r.wechat)}
+      ${field("eSales", "商务组员", r.sales)}
+      ${field("eCoop", "合作类型", r.coop_types)}
+      ${field("eAccounts", "平台账号", r.platform_accounts)}
+      <div class="form-row"><label>合作状态</label><select id="eStatus">${["跟进中","有意向","未合作","无意向","合作成功"].map(s => `<option ${s === r.status ? "selected" : ""}>${s}</option>`).join("")}</select></div>
+      ${field("eFollow", "跟进详情", r.follow_detail, "textarea")}
+      ${field("eRemark", "备注", r.remark, "textarea")}`,
+      okText: "保存", onOk: async body => {
+        await S.api(`/inquiries/${r.id}/update`, {method: "POST", body: {
+          name: body.querySelector("#eName").value.trim(), brand: body.querySelector("#eBrand").value.trim(),
+          product: body.querySelector("#eProduct").value.trim(), category: body.querySelector("#eCategory").value.trim(),
+          media_company: body.querySelector("#eMedia").value.trim(), contact: body.querySelector("#eContact").value.trim(),
+          amount: body.querySelector("#eAmount").value || null, rebate: body.querySelector("#eRebate").value || null,
+          media_amount: body.querySelector("#eMediaAmount").value || null,
+          wechat: body.querySelector("#eWechat").value.trim(), sales: body.querySelector("#eSales").value.trim(),
+          coop_types: body.querySelector("#eCoop").value.trim(), platform_accounts: body.querySelector("#eAccounts").value.trim(),
+          status: body.querySelector("#eStatus").value, follow_detail: body.querySelector("#eFollow").value.trim(),
+          remark: body.querySelector("#eRemark").value.trim(),
+        }});
+        S.toast("询单已保存", "ok"); load();
+      }
+    });
+  });
+}
+
+S.$("searchBtn").onclick = () => { page = 1; load(); };
+S.$("resetBtn").onclick = () => {
+  ["fStatus","fQ","fBrand","fMedia","fSales"].forEach(id => S.$(id).value = "");
+  page = 1; load();
+};
+
+S.$("sendWechatBtn").onclick = () => {
+  const ids = [...selectedInquiryIds];
+  if (!ids.length) { S.toast("请先勾选询单", "err"); return; }
+  S.modal({title: `发送微信（${ids.length}条询单）`, wide: true, body: `<div class="form-row"><label>消息内容</label><textarea id="wechatText" rows="6" placeholder="请输入要发送的内容"></textarea></div><div class="sub">系统将发送到所选询单的联系人微信号。</div>`, okText: "发送", onOk: async body => {
+    const text = body.querySelector("#wechatText").value.trim();
+    if (!text) { S.toast("消息内容不能为空", "err"); return false; }
+    const r = await S.api("/inquiries/send-wechat", {method:"POST", body:{ids, text}});
+    S.toast(`已发送到 ${r.count} 个微信号`, "ok");
+  }});
+};
+["fQ","fBrand","fMedia","fSales"].forEach(id => S.$(id).addEventListener("keydown", e => {
+  if (e.key === "Enter") { page = 1; load(); }
+}));
+
+S.$("addInquiryBtn").onclick = () => {
+  const field = (id, label, type="input") => `<div class="form-row"><label>${label}</label>${type === "textarea" ? `<textarea id="${id}"></textarea>` : `<input id="${id}">`}</div>`;
+  S.modal({title: "新增商务询单", wide: true, body: `${field("aName","询单名称")}${field("aBrand","品牌")}${field("aProduct","产品")}${field("aCategory","品类")}${field("aMedia","媒介公司")}${field("aContact","联系人")}${field("aWechat","联系人微信")}${field("aSales","商务组员")}${field("aCoop","合作类型")}${field("aAccounts","平台账号")}${field("aFollow","跟进详情","textarea")}`, okText: "创建", onOk: async body => {
+    await S.api("/inquiries/create", {method:"POST", body:{
+      name: body.querySelector("#aName").value.trim(), brand: body.querySelector("#aBrand").value.trim(),
+      product: body.querySelector("#aProduct").value.trim(), category: body.querySelector("#aCategory").value.trim(),
+      media_company: body.querySelector("#aMedia").value.trim(), contact: body.querySelector("#aContact").value.trim(),
+      wechat: body.querySelector("#aWechat").value.trim(), sales: body.querySelector("#aSales").value.trim(),
+      coop_types: body.querySelector("#aCoop").value.trim(), platform_accounts: body.querySelector("#aAccounts").value.trim(),
+      follow_detail: body.querySelector("#aFollow").value.trim()
+    }});
+    S.toast("询单已创建", "ok"); load();
+  }});
+};
+
+S.$("syncBtn").onclick = async (e) => {
+  const btn = e.target;
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 同步中';
+  try {
+    const r = await S.api("/inquiries/sync", { method: "POST" });
+    S.toast(`同步完成:共 ${r.total} 条,新增 ${r.new},更新 ${r.updated},合作成功联动 ${r.won}`, "ok");
+    page = 1; load();
+  } catch (err) { S.toast(err.message, "err"); }
+  btn.disabled = false; btn.textContent = "🔄 同步飞书询单";
+};
+
+load();
+</script>
+{% endblock %}

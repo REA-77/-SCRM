@@ -1,0 +1,113 @@
+{% extends "scrm/base.html" %}
+{% block title %}线索总览{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>🧭 购买意向线索总览</h2>
+    <div class="sub">所有由评论 AI 识别出的购买意向线索,统一分配与跟进</div>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="/scrm/leads">进入线索列表 →</a>
+  </div>
+</div>
+
+<div class="grid cards-4">
+  <div class="card stat-card kpi-primary">
+    <div class="kpi-ico">🛒</div>
+    <div class="kpi-label">线索总量</div>
+    <div class="kpi-value" id="kTotal">—</div>
+    <div class="kpi-foot">购买意向评论自动入库</div>
+  </div>
+  <div class="card stat-card kpi-red">
+    <div class="kpi-ico">⏰</div>
+    <div class="kpi-label">跟进超时</div>
+    <div class="kpi-value" id="kOverdue">—</div>
+    <div class="kpi-foot"><a href="/scrm/leads/alerts">前往异常告警 →</a></div>
+  </div>
+  <div class="card stat-card kpi-green">
+    <div class="kpi-ico">🤝</div>
+    <div class="kpi-label">已成交</div>
+    <div class="kpi-value" id="kWon">—</div>
+    <div class="kpi-foot">线索转化完成</div>
+  </div>
+  <div class="card stat-card kpi-teal">
+    <div class="kpi-ico">📈</div>
+    <div class="kpi-label">成交率</div>
+    <div class="kpi-value" id="kRate">—</div>
+    <div class="kpi-foot">成交 / 线索总量</div>
+  </div>
+</div>
+
+<div class="card mt16">
+  <div class="card-title">🔄 线索状态分布</div>
+  <div class="pipeline" id="pipeline"></div>
+</div>
+
+<div class="grid cards-2 mt16">
+  <div class="card">
+    <div class="card-title">👥 负责人分布</div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>负责人</th><th class="right">线索数</th><th class="right">跟进中</th><th class="right">已成交</th><th style="width:160px;">占比</th></tr></thead>
+        <tbody id="ownerBody"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">🔥 最紧迫的超时线索 <span class="more"><a href="/scrm/leads/alerts">全部 →</a></span></div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>来源评论</th><th>负责人</th><th>截止时间</th></tr></thead>
+        <tbody id="overdueBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const COLOR = { new: "#6b7280", contacted: "#4f46e5", following: "#0d9488",
+  feedback: "#d97706", won: "#16a34a", lost: "#9ca3af" };
+
+async function load() {
+  const d = await S.api("/leads/overview");
+  S.$("kTotal").textContent = d.total.toLocaleString();
+  const overdue = d.statuses.reduce((s, x) => s + x.overdue, 0);
+  S.$("kOverdue").textContent = overdue.toLocaleString();
+  S.$("kWon").textContent = d.won.toLocaleString();
+  S.$("kRate").textContent = d.win_rate + "%";
+
+  const order = ["new", "contacted", "following", "feedback", "won", "lost"];
+  const cls = { won: "win", lost: "lose" };
+  S.$("pipeline").innerHTML = order.map(k => {
+    const s = d.statuses.find(x => x.key === k);
+    return `<div class="stage ${cls[k] || "done"}" style="cursor:pointer;"
+      onclick="location.href='/scrm/leads?status=${k}'">
+      <div class="node">${s.label}${s.overdue ? ` <span class="badge red">${s.overdue} 超时</span>` : ""}
+        <span class="num">${s.count.toLocaleString()}</span></div>
+    </div>`;
+  }).join("");
+
+  const maxOwner = Math.max(1, ...d.by_owner.map(o => Number(o.c)));
+  S.$("ownerBody").innerHTML = d.by_owner.length ? d.by_owner.map(o => `
+    <tr>
+      <td><b>${S.esc(o.owner)}</b></td>
+      <td class="right">${Number(o.c).toLocaleString()}</td>
+      <td class="right">${Number(o.active || 0).toLocaleString()}</td>
+      <td class="right" style="color:var(--green);">${Number(o.won || 0).toLocaleString()}</td>
+      <td><div style="background:#eef0f5;border-radius:6px;height:8px;">
+        <div style="width:${o.c / maxOwner * 100}%;background:var(--primary);height:100%;border-radius:6px;"></div></div></td>
+    </tr>`).join("") : `<tr><td colspan="5" class="muted" style="text-align:center;padding:20px;">暂无分配数据</td></tr>`;
+
+  S.$("overdueBody").innerHTML = d.overdue_list.length ? d.overdue_list.map(l => `
+    <tr class="row-overdue" style="cursor:pointer;" onclick="location.href='/scrm/leads/${l.id}'">
+      <td class="cell-content"><div class="clamp">${S.esc(l.content)}</div>
+        <div class="sub2">${S.platformTag(l.platform)} · ${S.esc(l.nickname || "匿名")}</div></td>
+      <td class="nowrap">${S.esc(l.owner || "未分配")}</td>
+      <td class="nowrap" style="color:var(--red);">${S.ago(l.due_ts)} 到期</td>
+    </tr>`).join("") : `<tr><td colspan="3" class="muted" style="text-align:center;padding:20px;">🎉 暂无超时线索</td></tr>`;
+}
+load().catch(e => S.toast(e.message, "err"));
+</script>
+{% endblock %}

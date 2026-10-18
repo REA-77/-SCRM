@@ -1,0 +1,111 @@
+{% extends "scrm/base.html" %}
+{% block title %}商单管理{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>📑 商单管理</h2>
+    <div class="sub">询单合作成功自动同步生成,可在详情中添加平台账户对应的展示视频链接</div>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <select id="fStatus">
+    <option value="">全部状态</option>
+    <option value="executing">执行中</option>
+    <option value="published">已发布</option>
+    <option value="won">合作成功</option>
+    <option value="kpi_done">KPI已完成</option>
+    <option value="ended">已结束</option>
+    <option value="canceled">已取消</option>
+  </select>
+  <input id="fQ" placeholder="商单名称 / 品牌 / 媒介公司">
+  <button class="btn primary" id="searchBtn">🔍 筛选</button>
+  <button class="btn" id="resetBtn">重置</button>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>商单名称</th>
+          <th style="width:100px;">品牌</th>
+          <th style="width:120px;">产品</th>
+          <th style="width:100px;">品类</th>
+          <th style="width:140px;">订单编号</th>
+          <th style="width:170px;">账户</th>
+          <th style="width:110px;">媒介公司</th>
+          <th style="width:80px;">负责人</th>
+          <th style="width:76px;">视频数</th>
+          <th style="width:90px;">状态</th>
+          <th style="width:120px;">预计发布</th>
+          <th style="width:140px;">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"><tr><td colspan="12"><span class="spin"></span> 加载中…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager" id="pager" style="padding:12px 14px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let page = 1, size = 20, total = 0, rows = [];
+const STATUS_COLOR = { executing: "primary", published: "teal", won: "green", kpi_done: "green", ended: "gray", canceled: "red" };
+const STATUS_TEXT = { executing: "执行中", published: "已发布", won: "合作成功", kpi_done: "KPI已完成", ended: "已结束", canceled: "已取消" };
+
+function params() {
+  const p = new URLSearchParams();
+  if (S.$("fStatus").value) p.set("status", S.$("fStatus").value);
+  if (S.$("fQ").value.trim()) p.set("q", S.$("fQ").value.trim());
+  p.set("page", page); p.set("size", size);
+  return p;
+}
+
+async function load() {
+    S.$("tbody").innerHTML = `<tr><td colspan="12" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  try {
+    const d = await S.api("/deals?" + params().toString());
+    rows = d.rows; total = d.total;
+    render();
+    S.pager(S.$("pager"), total, page, size, p => { page = p; load(); });
+  } catch (e) {
+    S.$("tbody").innerHTML = `<tr><td colspan="12" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+  }
+}
+
+function render() {
+  if (!rows.length) {
+    S.$("tbody").innerHTML = `<tr><td colspan="12"><div class="empty"><div class="big">📑</div>暂无商单,询单标记「合作成功」后自动生成</div></td></tr>`;
+    return;
+  }
+  S.$("tbody").innerHTML = rows.map(r => `<tr>
+    <td><a href="/scrm/deals/${r.id}"><div class="clamp">${S.esc(r.name || "-")}</div></a></td>
+    <td>${S.esc(r.brand || "-")}</td>
+    <td><div class="clamp sub2">${S.esc(r.product || "-")}</div></td>
+    <td>${S.esc(r.category || "—")}</td>
+    <td class="mono">${S.esc(r.order_no || "—")}</td>
+    <td><div class="clamp sub2">${S.esc(r.platform_accounts || "—")}</div></td>
+    <td>${S.esc(r.media_company || "-")}</td>
+    <td>${S.esc(r.owner || "-")}</td>
+    <td class="mono">${r.video_count || 0}</td>
+    <td>${S.badge(r.display_status || STATUS_TEXT[r.status] || r.status, STATUS_COLOR[r.status] || "gray", true)}</td>
+    <td class="nowrap muted">${S.fmtTs(r.expect_ts)}</td>
+    <td class="nowrap"><a class="btn sm primary" href="/scrm/deals/${r.id}?edit=1">编辑</a> <a class="btn sm" href="/scrm/deals/${r.id}">详情</a></td>
+  </tr>`).join("");
+}
+
+S.$("searchBtn").onclick = () => { page = 1; load(); };
+S.$("resetBtn").onclick = () => { S.$("fStatus").value = ""; S.$("fQ").value = ""; page = 1; load(); };
+S.$("fQ").addEventListener("keydown", e => { if (e.key === "Enter") { page = 1; load(); } });
+
+// 支持 /scrm/deals?q=xxx 跳转带入
+(() => {
+  const qs = new URLSearchParams(location.search);
+  if (qs.get("q")) S.$("fQ").value = qs.get("q");
+})();
+
+load();
+</script>
+{% endblock %}

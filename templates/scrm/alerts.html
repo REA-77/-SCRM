@@ -1,0 +1,158 @@
+{% extends "scrm/base.html" %}
+{% block title %}告警中心{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>🚨 告警中心</h2>
+    <div class="sub">集中处理负面情感 / 高影响 / 漏看兜底告警,防止负面舆情扩散</div>
+  </div>
+</div>
+
+<div class="grid cards-4" id="sumCards" style="margin-bottom:14px;">
+  <div class="card stat-card kpi-red">
+    <div class="kpi-ico">🔥</div>
+    <div class="kpi-label">高级别告警</div>
+    <div class="kpi-value" id="cntHigh">—</div>
+    <div class="kpi-foot">含投诉/避雷/维权等词</div>
+  </div>
+  <div class="card stat-card kpi-amber">
+    <div class="kpi-ico">⚠️</div>
+    <div class="kpi-label">待处理告警</div>
+    <div class="kpi-value" id="cntPending">—</div>
+    <div class="kpi-foot">负面且未人工处理</div>
+  </div>
+  <div class="card stat-card kpi-teal">
+    <div class="kpi-ico">✅</div>
+    <div class="kpi-label">已处理</div>
+    <div class="kpi-value" id="cntDone">—</div>
+    <div class="kpi-foot">人工跟进完成</div>
+  </div>
+  <div class="card stat-card kpi-primary">
+    <div class="kpi-ico">💬</div>
+    <div class="kpi-label">负面评论总量</div>
+    <div class="kpi-value" id="cntAll">—</div>
+    <div class="kpi-foot">AI 累计识别</div>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <select id="fLevel">
+    <option value="">全部级别</option>
+    <option value="high">🔥 高级别</option>
+    <option value="normal">普通</option>
+  </select>
+  <select id="fPlatform">
+    <option value="">全部平台</option>
+    <option>抖音</option><option>视频号</option><option>小红书</option>
+    <option>B站</option><option>快手</option><option>微博</option>
+  </select>
+  <select id="fHandled">
+    <option value="0">未处理</option>
+    <option value="1">已处理</option>
+    <option value="">全部状态</option>
+  </select>
+  <select id="fDays">
+    <option value="" selected>全部时间</option>
+    <option value="1">今天</option>
+    <option value="7">近 7 天</option>
+    <option value="30">近 30 天</option>
+    <option value="90">近 90 天</option>
+  </select>
+  <input id="fQ" placeholder="搜索告警评论内容">
+  <button class="btn primary" id="searchBtn">🔍 筛选</button>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th style="width:82px;">级别</th>
+          <th style="width:100px;">告警类型</th>
+          <th style="width:70px;">平台</th>
+          <th>评论内容</th>
+          <th style="width:110px;">评论人</th>
+          <th style="width:130px;">触发时间</th>
+          <th style="width:80px;">状态</th>
+          <th style="width:310px;">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="pager" id="pager" style="padding:12px 14px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let page = 1, size = 20, rows = [];
+
+async function loadSummary() {
+  const q = new URLSearchParams({ page: "1", size: "1" });
+  const [all, pending, done, high] = await Promise.all([
+    S.api("/alerts?" + new URLSearchParams({ page: "1", size: "1" }).toString()).catch(() => ({ total: 0 })),
+    S.api("/alerts?handled=0&page=1&size=1").catch(() => ({ total: 0 })),
+    S.api("/alerts?handled=1&page=1&size=1").catch(() => ({ total: 0 })),
+    S.api("/alerts?level=high&page=1&size=1").catch(() => ({ total: 0 })),
+  ]);
+  S.$("cntAll").textContent = all.total.toLocaleString();
+  S.$("cntPending").textContent = pending.total.toLocaleString();
+  S.$("cntDone").textContent = done.total.toLocaleString();
+  S.$("cntHigh").textContent = high.total.toLocaleString();
+}
+
+async function load() {
+  const p = new URLSearchParams({ page, size });
+  const v = id => S.$(id).value;
+  if (v("fLevel")) p.set("level", v("fLevel"));
+  if (v("fPlatform")) p.set("platform", v("fPlatform"));
+  if (v("fHandled") !== "") p.set("handled", v("fHandled"));
+  if (v("fDays")) p.set("days", v("fDays"));
+  if (v("fQ")) p.set("q", v("fQ"));
+  S.$("tbody").innerHTML = `<tr><td colspan="8" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  try {
+    const d = await S.api("/alerts?" + p.toString());
+    rows = d.rows || [];
+    if (!rows.length) {
+      S.$("tbody").innerHTML = `<tr><td colspan="8"><div class="empty"><div class="big">🎉</div>当前筛选下没有告警</div></td></tr>`;
+    } else {
+      S.$("tbody").innerHTML = rows.map((r, i) => `
+        <tr class="${r.handled ? "" : "row-neg"}">
+          <td>${r.level === "high" ? S.badge("🔥 高级", "red", true) : S.badge("普通", "amber", true)}</td>
+          <td>负面情感告警</td>
+          <td>${S.platformTag(r.platform)}</td>
+          <td class="cell-content">
+            <a href="/scrm/comments/${r.src_table}/${r.src_pk}"><div class="clamp">${S.esc(r.content)}</div></a>
+            ${r.reply ? `<div class="sub2">💡 ${S.esc(String(r.reply).slice(0, 56))}</div>` : ""}
+          </td>
+          <td class="nowrap">${S.esc(r.nickname || "匿名")}</td>
+          <td class="nowrap muted">${S.fmtTs(r.ctime)}</td>
+          <td>${r.handled ? S.badge("已处理", "teal") : S.badge("待处理", "red")}</td>
+          <td class="nowrap">
+            ${S.commentActionButtons(i, { detailHref: `/scrm/comments/${r.src_table}/${r.src_pk}` })}
+          </td>
+        </tr>`).join("");
+    }
+    S.bindCommentActionButtons(S.$("tbody"), rows, () => { load(); loadSummary(); });
+    S.pager(S.$("pager"), d.total, page, size, x => { page = x; load(); });
+  } catch (e) {
+    S.$("tbody").innerHTML = `<tr><td colspan="8" style="color:#dc2626;padding:20px;">${S.esc(e.message)}</td></tr>`;
+  }
+}
+
+window.quickHandle = async (table, id) => {
+  try {
+    await S.commentApi("/comment/handle", { table, id, handled: 1 });
+    S.toast("告警已标记处理", "ok");
+    load(); loadSummary();
+  } catch (e) { S.toast(e.message, "err"); }
+};
+
+S.$("searchBtn").onclick = () => { page = 1; load(); };
+S.$("fQ").addEventListener("keydown", e => { if (e.key === "Enter") { page = 1; load(); } });
+
+loadSummary();
+load();
+</script>
+{% endblock %}

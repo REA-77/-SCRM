@@ -1,0 +1,10 @@
+{% extends "scrm/base.html" %}
+{% block title %}品类管理{% endblock %}
+{% block content %}
+<div class="page-head"><div><h2>🏷️ 品类管理</h2><div class="sub">维护商单可使用的产品品类</div></div><button class="btn primary" id="addBtn">➕ 新增品类</button></div>
+<div class="card" style="padding:0"><div class="table-wrap"><table class="data"><thead><tr><th>品类名称</th><th>状态</th><th>更新时间</th></tr></thead><tbody id="tbody"><tr><td colspan="3" class="loading">加载中…</td></tr></tbody></table></div></div>
+{% endblock %}
+{% block scripts %}<script>
+async function load(){const d=await S.api("/categories");S.$("tbody").innerHTML=d.rows.map(r=>`<tr><td>${S.esc(r.name)}</td><td>${S.badge(r.status==="active"?"启用":"停用",r.status==="active"?"green":"gray")}</td><td>${S.fmtTs(r.updated_ts)}</td></tr>`).join("")||'<tr><td colspan="3" class="muted">暂无品类</td></tr>'}
+S.$("addBtn").onclick=()=>S.modal({title:"新增品类",body:'<div class="form-row"><label>品类名称</label><input id="mName"></div>',okText:"保存",onOk:async b=>{const name=b.querySelector("#mName").value.trim();if(!name)throw Error("品类名称必填");await S.api("/categories/save",{method:"POST",body:{name}});S.toast("已保存","ok");load()}});load();
+</script>{% endblock %}

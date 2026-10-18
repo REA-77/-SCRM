@@ -23,8 +23,10 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
 
 # ---------- 分析守护进程 ----------
-ANALYZE_INTERVAL = 3600     # 轮询间隔(秒),1 小时一轮
-ANALYZE_BATCH = 0            # 每轮每表处理条数,0=不限制(一轮扫完全部待分析)
+ANALYZE_INTERVAL = 30       # 轮询间隔(秒):事件驱动式快扫,抓到新评论尽快分析
+ANALYZE_BATCH = 20           # 每轮每表处理条数,0=不限制;快扫建议限制小批量避免堆积时拖太久
+ANALYZE_FULL_SWEEP = 3600    # 全量补扫间隔(秒),周期性把快扫批次外遗留的待分析清完
+ANALYZE_MAX_AGE_DAYS = 90    # 自动分析只处理最近 N 天内的评论(0=不限制);手动分析不受此限制
 ANALYZE_MAX_TOKENS = 200
 ANALYZE_TEMPERATURE = 0.85
 
@@ -36,6 +38,7 @@ FEISHU_CHAT_ID = ""        # 目标群聊 chat_id(机器人需已入群)
 # ---------- 评论表清单(需 AI 分析的表)----------
 COMMENT_TABLES = [
     "bilibili_video_comment",
+    "channels_video_comment",
     "douyin_aweme_comment",
     "kuaishou_video_comment",
     "weibo_note_comment",
@@ -45,6 +48,11 @@ COMMENT_TABLES = [
     "reddit_comment",
 ]
 
+CONTENT_TABLES = [
+    "bilibili_video", "channels_video", "douyin_aweme", "kuaishou_video",
+    "weibo_note", "xhs_note", "zhihu_content", "tieba_note", "reddit_post",
+]
+
 # ---------- 新增分析字段定义(迁移用)----------
 COMMENT_NEW_COLUMNS = [
     ("analyzed", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已分析(0:否 1:是)'"),
@@ -52,4 +60,10 @@ COMMENT_NEW_COLUMNS = [
     ("purchase_intent", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '购买意向(0:无 1:有)'"),
     ("reply_suggestion", "TEXT NULL COMMENT 'AI生成的回复推荐'"),
     ("handled", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '人工已处理(0:否 1:是,已处理不再自动分析)'"),
+    ("no_action", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '无需操作(0:否 1:是)'"),
+    ("reviewed", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '人工已审核(0:否 1:是)'"),
+    ("delete_requested", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '请求自动删除(0:否 1:是)'"),
 ]
+
+# 飞书负面预警发送开关；不影响评论分析及询单同步
+FEISHU_ALERT_ENABLED = False

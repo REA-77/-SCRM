@@ -1,0 +1,568 @@
+{% extends "scrm/base.html" %}
+{% block title %}评论列表{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>💬 评论列表</h2>
+    <div class="sub">跨平台全量评论查询、情感/意向筛选与批量处理</div>
+  </div>
+  <div class="actions">
+    <button class="btn" id="exportBtn">⬇ 导出当前结果 CSV</button>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <select id="fPlatform">
+    <option value="">全部平台</option>
+    <option>抖音</option><option>视频号</option><option>小红书</option>
+    <option>B站</option><option>快手</option><option>微博</option>
+    <option>知乎</option>
+  </select>
+  <select id="fStatus">
+    <option value="">全部状态</option>
+    <option value="pending_analysis">待分析</option>
+    <option value="analysis_failed">分析失败</option>
+    <option value="analyzed">已分析</option>
+    <option value="intent">已标注意图</option>
+    <option value="reply_ready">有推荐回复</option>
+    <option value="unreviewed">未审核</option>
+    <option value="reviewed">已审核</option>
+    <option value="unhandled">未处理</option>
+    <option value="handled">已处理</option>
+    <option value="no_action">无需操作</option>
+    <option value="delete_requested">待删除</option>
+  </select>
+  <select id="fIntent">
+    <option value="">全部意向</option>
+    <option value="1">有购买意向</option>
+    <option value="0">无购买意向</option>
+  </select>
+  <select id="fSentiment">
+    <option value="">全部情感</option>
+    <option value="positive">正向</option>
+    <option value="negative">负向</option>
+  </select>
+  <select id="fDays">
+    <option value="">全部时间</option>
+    <option value="1">今天</option>
+    <option value="7">近 7 天</option>
+    <option value="30">近 30 天</option>
+    <option value="90">近 90 天</option>
+  </select>
+  <input id="fUser" placeholder="评论人昵称">
+  <input id="fAuthor" placeholder="作者昵称（视频/笔记原作者）">
+  <input id="fQ" placeholder="评论内容关键字">
+  <input id="fVid" placeholder="视频/笔记 ID 精确筛选">
+  <button class="btn primary" id="searchBtn">🔍 筛选</button>
+  <button class="btn" id="resetBtn">重置</button>
+</div>
+
+<div class="filter-bar">
+  <span class="sub" id="selInfo">已选择 0 条</span>
+  <button class="btn primary" id="batchGenerateBtn">批量生成</button>
+  <button class="btn primary" id="batchReviewBtn">批量审核</button>
+  <button class="btn" id="batchNoActionBtn">无需操作</button>
+  <button class="btn primary" id="batchAutoBtn">自动操作</button>
+  <span class="sub" id="batchGenerateInfo" role="status" aria-live="polite"></span>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th style="width:34px;"><input type="checkbox" id="chkAll"></th>
+          <th style="width:70px;">平台</th>
+          <th>评论内容</th>
+          <th style="width:260px;">推荐回复</th>
+          <th style="width:110px;">评论人</th>
+          <th style="width:210px;">所属内容</th>
+          <th style="width:130px;">作者昵称</th>
+          <th style="width:120px;">意图分析</th>
+          <th style="width:90px;">正负向</th>
+          <th style="width:105px;">状态</th>
+          <th style="width:130px;">评论时间</th>
+          <th style="width:250px;">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"><tr><td colspan="12"><span class="spin"></span> 加载中…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="sub2" style="padding:12px 14px;">按评论主题分页，每组最多展示 50 条评论；可翻页查看其余回复。筛选命中子评论时仍保留所属主题。</div>
+  <div class="pager" id="pager" style="padding:12px 14px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let page = 1, size = 20, total = 0, rows = [];
+let threadPages = new Map(), loadVersion = 0;
+const regeneratingReplies = new Set();
+const filterFields = {
+  platform: "fPlatform", status: "fStatus", intent: "fIntent",
+  sentiment: "fSentiment", days: "fDays", user: "fUser", author: "fAuthor", q: "fQ", vid: "fVid",
+};
+
+function params() {
+  const p = new URLSearchParams();
+  const v = (id) => S.$(id).value.trim();
+  if (v("fPlatform")) p.set("platform", v("fPlatform"));
+  if (v("fStatus")) p.set("status", v("fStatus"));
+  if (v("fIntent")) p.set("intent", v("fIntent"));
+  if (v("fSentiment")) p.set("sentiment", v("fSentiment"));
+  if (v("fDays")) p.set("days", v("fDays"));
+  if (v("fUser")) p.set("user", v("fUser"));
+  if (v("fAuthor")) p.set("author", v("fAuthor"));
+  if (v("fQ")) p.set("q", v("fQ"));
+  if (v("fVid")) p.set("vid", v("fVid"));
+  p.set("page", page); p.set("size", size);
+  return p;
+}
+
+async function load() {
+  const version = ++loadVersion;
+  const savedScrollY = window.scrollY || window.pageYOffset || 0;
+  const query = params().toString();
+  // 将已应用的筛选和分页保存在当前历史记录中，浏览器后退时也能恢复。
+  history.replaceState(null, "", location.pathname + "?" + query);
+  S.$("tbody").innerHTML = `<tr><td colspan="12" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  try {
+    const d = await S.api("/comments?" + query);
+    if (version !== loadVersion) return;
+    rows = d.rows; total = d.total;
+    threadPages = new Map((d.threads || []).map(t => [`${t.src_table}/${t.root_pk}`, t]));
+    render();
+    S.pager(S.$("pager"), total, page, size, p => { page = p; load(); });
+    // 刷新列表后恢复用户刚才浏览的位置，避免批量操作完成后跳回页面顶部。
+    requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
+  } catch (e) {
+    if (version !== loadVersion) return;
+    S.$("tbody").innerHTML = `<tr><td colspan="12" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+    requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
+  }
+}
+
+async function loadThread(button) {
+  const version = loadVersion;
+  const key = button.dataset.thread;
+  const meta = threadPages.get(key);
+  if (!meta) return;
+  const offset = Number(button.dataset.offset);
+  const query = params();
+  query.set('offset', offset);
+  S.$$('#tbody button[data-thread]').filter(b => b.dataset.thread === key).forEach(b => b.disabled = true);
+  try {
+    const d = await S.api(`/comments/thread/${encodeURIComponent(meta.src_table)}/${meta.root_pk}?${query}`);
+    if (version !== loadVersion) return;
+    const belongs = r => `${r.src_table}/${r.thread_root}` === key;
+    const start = rows.findIndex(belongs);
+    if (start < 0) return;
+    const current = rows.filter(belongs);
+    const root = current.find(r => r.src_pk === meta.root_pk);
+    const replacement = offset > 0 && root ? [root, ...d.rows] : d.rows;
+    rows.splice(start, current.length, ...replacement);
+    threadPages.set(key, {...meta, offset: d.offset, has_more: d.has_more});
+    render();
+  } catch (e) {
+    if (version === loadVersion) S.toast(e.message || '回复加载失败', 'err');
+  } finally {
+    if (version === loadVersion) S.$$('#tbody button[data-thread]').forEach(b => b.disabled = false);
+  }
+}
+
+function render() {
+  if (!rows.length) {
+    S.$("tbody").innerHTML = `<tr><td colspan="12"><div class="empty"><div class="big">🔍</div>没有符合条件的评论</div></td></tr>`;
+    updateSelectedInfo();
+    return;
+  }
+  S.$("tbody").innerHTML = rows.map((r, index) => {
+    const cls = r.neg ? "row-neg" : (r.intent ? "row-intent" : "");
+    const key = `${r.src_table}/${r.thread_root}`;
+    const meta = threadPages.get(key);
+    const last = !rows[index+1] || `${rows[index+1].src_table}/${rows[index+1].thread_root}` !== key;
+    const navigation = last && meta && (meta.has_more || meta.offset > 0)
+      ? `<tr><td colspan="12" class="sub2">本组第 ${Math.floor(meta.offset / meta.batch_size) + 1} 页
+          ${meta.offset > 0 ? `<button class="btn sm" data-thread="${S.esc(key)}" data-offset="${Math.max(0, meta.offset-meta.batch_size)}">上一页回复</button>` : ''}
+          ${meta.has_more ? `<button class="btn sm" data-thread="${S.esc(key)}" data-offset="${meta.offset+meta.batch_size}">下一页回复</button>` : ''}
+          翻页将替换当前组回复，保留主题评论。</td></tr>` : '';
+    return `<tr class="${cls}">
+      <td><input type="checkbox" class="chk" ${r.matches_filter === false ? "disabled" : ""} data-table="${r.src_table}" data-id="${r.src_pk}"></td>
+      <td>${S.platformTag(r.platform)}</td>
+      <td class="cell-content" style="padding-left:${12 + Math.min(r.depth || 0, 8) * 20}px;">
+        ${r.depth ? `<div class="sub2">↳ ${r.depth + 1}级评论</div>` : ""}
+        ${r.parent_missing ? `<div class="sub2">父评论未入库</div>` : ""}
+        ${r.matches_filter === false ? `<div class="sub2">关联上下文（未命中筛选）</div>` : ""}
+        <a href="/scrm/comments/${r.src_table}/${r.src_pk}${S.esc(location.search)}"><div class="clamp comment-preview" tabindex="0" data-preview="${S.esc(r.content || "")}">${S.esc(r.content)}</div></a>
+      </td>
+      <td class="cell-content">
+        ${r.reply ? `<div class="clamp comment-preview" tabindex="0" data-preview="${S.esc(r.reply || "")}">${S.esc(r.reply)}</div>` : '<span class="muted">—</span>'}
+        <button class="btn sm" style="margin-top:6px;" data-act="regenerate" data-table="${r.src_table}" data-id="${r.src_pk}"
+          ${regeneratingReplies.has(`${r.src_table}/${r.src_pk}`) ? 'disabled' : ''}
+          title="重新分析该评论并生成推荐回复">${regeneratingReplies.has(`${r.src_table}/${r.src_pk}`) ? '<span class="spin"></span> 生成中…' : '🔄 重新生成'}</button>
+      </td>
+      <td class="nowrap">${S.esc(r.nickname || "匿名")}<div class="sub2">👍 ${S.esc(r.likes || 0)}</div></td>
+      <td class="cell-content">
+        ${r.content_id
+          ? `<a class="content-link" href="/scrm/videos?${S.esc(new URLSearchParams({vid: r.content_id, platform: r.platform || ""}).toString())}" data-url="${S.esc(r.video_url || "")}" title="单击查看视频列表，双击打开原内容"><div class="clamp">${S.esc(r.video_title || "(无标题)")}</div></a>`
+          : `<span class="muted">—</span>`}
+        <div class="sub2 mono">${S.esc(r.content_id || "-")}</div>
+      </td>
+      <td class="nowrap">${S.esc(r.author_nickname || "—")}</td>
+      <td>${intentResult(r)}</td>
+      <td>${sentimentResult(r)}</td>
+      <td>${S.badge(rowStatus(r).label, rowStatus(r).color)}</td>
+      <td class="nowrap muted">${S.fmtTs(r.ctime)}</td>
+      <td class="nowrap">
+        <button class="btn sm primary" data-act="calibrate" data-i="${rows.indexOf(r)}">✏️ 人工修正</button>
+        <button class="btn sm primary" data-act="review" data-table="${r.src_table}" data-id="${r.src_pk}">审核通过</button>
+        <button class="btn sm danger" data-act="markDelete" data-table="${r.src_table}" data-id="${r.src_pk}">标注删除</button>
+        <button class="btn sm" data-act="noAction" data-table="${r.src_table}" data-id="${r.src_pk}">无需操作</button>
+      </td>
+    </tr>${navigation}`;
+  }).join("");
+  S.$("chkAll").checked = false;
+  S.$$(".chk").forEach(c => c.onchange = updateSelectedInfo);
+  S.$$('#tbody button[data-thread]').forEach(b => b.onclick = () => loadThread(b));
+  S.$$("#tbody button[data-act]").forEach(b => b.onclick = () => {
+    if (b.dataset.act === "regenerate") return regenerateReply(b);
+    if (b.dataset.act === "reply") return replyModal(rows[Number(b.dataset.i)]);
+    if (b.dataset.act === "calibrate") return calibrationModal(rows[Number(b.dataset.i)]);
+    if (b.dataset.act === "markDelete") return markDelete({ table: b.dataset.table, id: Number(b.dataset.id) });
+    return runBatch([{ table: b.dataset.table, id: Number(b.dataset.id) }], b.dataset.act, b.dataset.act === "delete");
+  });
+  updateSelectedInfo();
+}
+
+async function regenerateReply(button) {
+  const key = `${button.dataset.table}/${button.dataset.id}`;
+  if (regeneratingReplies.has(key)) return;
+  regeneratingReplies.add(key);
+  button.disabled = true;
+  button.innerHTML = '<span class="spin"></span> 生成中…';
+  try {
+    const result = await S.api(`/comment/${encodeURIComponent(button.dataset.table)}/${encodeURIComponent(button.dataset.id)}/analyze`, { method: "POST" });
+    regeneratingReplies.delete(key);
+    S.toast("推荐回复已重新生成", "ok");
+    const row = rows.find(r => r.src_table === button.dataset.table && Number(r.src_pk) === Number(button.dataset.id));
+    if (row) {
+      row.reply = result.reply || row.reply;
+      row.neg = result.negative ? 1 : 0;
+      row.intent = result.intent ? 1 : 0;
+      row.analyzed = 1;
+      const cells = button.closest("tr").children;
+      if (cells[3]) cells[3].innerHTML = row.reply ? `<div class="clamp comment-preview" tabindex="0" data-preview="${S.esc(row.reply)}">${S.esc(row.reply)}</div>` : '<span class="muted">—</span>';
+      if (cells[7]) cells[7].innerHTML = intentResult(row);
+      if (cells[8]) cells[8].innerHTML = sentimentResult(row);
+      if (cells[9]) cells[9].innerHTML = S.badge(rowStatus(row).label, rowStatus(row).color);
+    }
+  } catch (e) {
+    S.toast(e.message || "重新生成失败，请重试", "err");
+  } finally {
+    regeneratingReplies.delete(key);
+    // 生成期间可能切换分页或刷新列表，恢复当前页面中同一条评论的按钮。
+    S.$$('#tbody button[data-act="regenerate"]').forEach(b => {
+      if (`${b.dataset.table}/${b.dataset.id}` !== key) return;
+      b.disabled = false;
+      b.textContent = "🔄 重新生成";
+    });
+  }
+}
+
+function intentResult(r) {
+  if (!r.analyzed) return S.badge("待分析", "gray");
+  if (r.intent) return S.badge("有意图", "amber", true);
+  return S.badge("无意图", "green");
+}
+
+// 延迟单击跳转，为双击留出判定时间；保留键盘和修饰键的原生链接行为。
+let contentClickTimer = null;
+let commentTooltip = null;
+function showCommentPreview(target) {
+  if (!commentTooltip) {
+    commentTooltip = document.createElement("div");
+    commentTooltip.className = "comment-tooltip";
+    document.body.appendChild(commentTooltip);
+  }
+  commentTooltip.textContent = target.dataset.preview || "";
+  const rect = target.getBoundingClientRect();
+  commentTooltip.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 480))}px`;
+  commentTooltip.style.top = `${Math.min(rect.bottom + 8, window.innerHeight - 240)}px`;
+  commentTooltip.style.display = "block";
+}
+function hideCommentPreview() {
+  if (commentTooltip) commentTooltip.style.display = "none";
+}
+S.$("tbody").addEventListener("mouseover", e => {
+  const target = e.target.closest(".comment-preview");
+  if (target) showCommentPreview(target);
+});
+S.$("tbody").addEventListener("mouseout", e => {
+  const target = e.target.closest(".comment-preview");
+  if (target && !target.contains(e.relatedTarget)) hideCommentPreview();
+});
+S.$("tbody").addEventListener("focusin", e => {
+  const target = e.target.closest(".comment-preview");
+  if (target) showCommentPreview(target);
+});
+S.$("tbody").addEventListener("focusout", e => {
+  if (e.target.closest(".comment-preview")) hideCommentPreview();
+});
+S.$("tbody").addEventListener("click", e => {
+  const link = e.target.closest("a.content-link");
+  if (!link) return;
+  clearTimeout(contentClickTimer);
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.detail === 0) return;
+  e.preventDefault();
+  if (e.detail > 1) return;
+  contentClickTimer = setTimeout(() => { location.href = link.href; }, 500);
+});
+S.$("tbody").addEventListener("dblclick", e => {
+  const link = e.target.closest("a.content-link");
+  if (!link) return;
+  clearTimeout(contentClickTimer);
+  e.preventDefault();
+  if (!link.dataset.url) return S.toast("该内容暂无原链接", "err");
+  window.open(link.dataset.url, "_blank", "noopener,noreferrer");
+});
+
+function sentimentResult(r) {
+  if (!r.analyzed) return S.badge("待分析", "gray");
+  return r.neg ? S.badge("负向", "red", true) : S.badge("正向", "green");
+}
+
+function rowStatus(r) {
+  if (r.handled) return { label: "已处理", color: "teal" };
+  if (r.no_action) return { label: "无需操作", color: "gray" };
+  if (r.delreq) return { label: "待删除", color: "red" };
+  if (r.reviewed) return { label: "已审核", color: "green" };
+  if (isAnalysisFailed(r)) return { label: "分析失败", color: "red" };
+  if (hasValidReply(r)) return { label: "有推荐回复", color: "primary" };
+  if (r.intent) return { label: "已标注意图", color: "amber" };
+  if (r.analyzed) return { label: "已分析", color: "green" };
+  return { label: "待分析", color: "gray" };
+}
+
+function isAnalysisFailed(r) {
+  return String(r.reply || "").startsWith("⚠ 分析失败");
+}
+
+function hasValidReply(r) {
+  return !!r.reply && !isAnalysisFailed(r);
+}
+
+function selected() {
+  return S.$$(".chk:checked:not(:disabled)").map(c => ({ table: c.dataset.table, id: Number(c.dataset.id) }));
+}
+
+function updateSelectedInfo() {
+  const n = selected().length;
+  S.$("selInfo").textContent = `已选择 ${n} 条`;
+}
+
+S.$("chkAll").onchange = e => {
+  S.$$(".chk:not(:disabled)").forEach(c => c.checked = e.target.checked);
+  updateSelectedInfo();
+};
+S.$("searchBtn").onclick = () => { page = 1; load(); };
+S.$("resetBtn").onclick = () => {
+  Object.values(filterFields).forEach(id => S.$(id).value = "");
+  page = 1; load();
+};
+["fQ","fUser","fAuthor","fVid"].forEach(id => S.$(id).addEventListener("keydown", e => {
+  if (e.key === "Enter") { page = 1; load(); }
+}));
+
+async function runBatch(sel, action, confirmIt = true) {
+  if (!sel.length) return S.toast("请先勾选评论", "err");
+  const cfg = {
+    review: ["review", "审核通过", "已审核"],
+    noAction: ["no-action", "无需操作", "已标记无需操作"],
+  }[action];
+  const exec = async () => {
+    const r = await S.commentApi("/comment/batch", { action: cfg[0], records: sel, value: 1 });
+    S.toast(`${cfg[2]} ${r.affected}/${sel.length} 条`, "ok");
+    // 接口成功后只更新当前页对应行的状态单元格，不重建列表 DOM。
+    const selectedKeys = new Set(sel.map(item => `${item.table}/${item.id}`));
+    rows.forEach(row => {
+      if (!selectedKeys.has(`${row.src_table}/${row.src_pk}`)) return;
+      if (action === "review") row.reviewed = 1;
+      if (action === "noAction") row.no_action = 1;
+      updateCommentRow(row);
+    });
+  };
+  if (confirmIt) S.confirm(`确认将选中的 ${sel.length} 条评论执行「${cfg[1]}」?`, exec);
+  else await exec();
+}
+
+function updateCommentRow(row) {
+  S.$$("#tbody button[data-act]").forEach(button => {
+    if (button.dataset.table !== row.src_table || Number(button.dataset.id) !== Number(row.src_pk)) return;
+    const cells = button.closest("tr").children;
+    if (cells[7]) cells[7].innerHTML = intentResult(row);
+    if (cells[8]) cells[8].innerHTML = sentimentResult(row);
+    if (cells[9]) cells[9].innerHTML = S.badge(rowStatus(row).label, rowStatus(row).color);
+  });
+}
+
+S.$("batchReviewBtn").onclick = () => runBatch(selected(), "review");
+S.$("batchGenerateBtn").onclick = () => batchGenerateReplies(selected());
+S.$("batchNoActionBtn").onclick = () => runBatch(selected(), "noAction");
+S.$("batchAutoBtn").onclick = () => autoOperate(selected());
+
+async function batchGenerateReplies(sel) {
+  const button = S.$("batchGenerateBtn");
+  if (button.disabled) return;
+  if (!sel.length) return S.toast("请先勾选评论", "err");
+  const pending = sel.filter(item => !regeneratingReplies.has(`${item.table}/${item.id}`));
+  if (!pending.length) return S.toast("所选评论正在生成中，请稍候", "err");
+  const skipped = sel.length - pending.length;
+  const info = S.$("batchGenerateInfo");
+  let succeeded = 0, failed = 0;
+  button.disabled = true;
+  pending.forEach(item => regeneratingReplies.add(`${item.table}/${item.id}`));
+  S.$$('#tbody button[data-act="regenerate"]').forEach(b => {
+    if (!regeneratingReplies.has(`${b.dataset.table}/${b.dataset.id}`)) return;
+    b.disabled = true;
+    b.innerHTML = '<span class="spin"></span> 生成中…';
+  });
+  try {
+    // 逐条请求，避免批量选择时同时占满生成服务；单条失败不影响后续评论。
+    for (const item of pending) {
+      button.textContent = `生成中 ${succeeded + failed + 1}/${pending.length}`;
+      info.textContent = `已完成 ${succeeded + failed}/${pending.length}，成功 ${succeeded} 条，失败 ${failed} 条`;
+      try {
+        await S.api(`/comment/${encodeURIComponent(item.table)}/${encodeURIComponent(item.id)}/analyze`, { method: "POST" });
+        succeeded++;
+      } catch (e) {
+        failed++;
+      }
+    }
+  } finally {
+    pending.forEach(item => regeneratingReplies.delete(`${item.table}/${item.id}`));
+    button.disabled = false;
+    button.textContent = "批量生成";
+    info.textContent = `批量生成完成：成功 ${succeeded} 条，失败 ${failed} 条${skipped ? `，跳过正在生成的 ${skipped} 条` : ""}`;
+    S.toast(info.textContent, failed ? "err" : "ok");
+    await load();
+  }
+}
+
+async function autoOperate(sel) {
+  if (!sel.length) return S.toast("请先勾选评论", "err");
+  S.confirm(`确认自动操作选中的 ${sel.length} 条评论? 无需操作和已处理会自动跳过。`, async () => {
+    try {
+      const r = await S.commentApi("/comment/auto-operate", { records: sel });
+      const errors = (r.details || []).filter(d => d.status !== "created");
+      const runningCount = r.queued || r.created || 0;
+      S.toast(`${runningCount} 个自动操作任务执行中${r.skipped ? `，跳过 ${r.skipped} 个` : ""}${r.waiting_for_retry ? `，${r.waiting_for_retry} 个等待重试` : ""}`, errors.length || r.waiting_for_retry ? "err" : "ok");
+      if (errors.length || r.waiting_for_retry) {
+        const waiting = r.waiting_for_retry ? `<li>有 ${r.waiting_for_retry} 条任务因队列繁忙，等待稍后重试</li>` : "";
+        S.modal({
+          title: "自动操作错误日志",
+          wide: true,
+          okText: null,
+          body: `<div class="sub" style="margin-bottom:8px;">以下项目未成功加入自动操作队列：</div><ul style="margin:0;padding-left:22px;">${waiting}${errors.map(d => `<li><span class="mono">${S.esc(`${d.table} #${d.id}`)}</span>：${S.esc(d.info || d.status || "未知错误")}</li>`).join("")}</ul>`,
+        });
+      }
+    } catch (e) {
+      S.modal({ title: "自动操作错误日志", okText: null, body: `<div style="color:#dc2626;white-space:pre-wrap;">${S.esc(e.message || "自动操作请求失败")}</div>` });
+    }
+  });
+}
+
+function markDelete(item) {
+  S.confirm("确认标注删除并置为已审核?", async () => {
+    const r = await S.commentApi("/comment/delete-accept", { table: item.table, id: item.id });
+    S.toast(r.affected ? "已标注删除并置为已审核" : "未找到记录", r.affected ? "ok" : "err");
+    const row = rows.find(x => x.src_table === item.table && Number(x.src_pk) === Number(item.id));
+    if (row && r.affected) { row.delreq = 1; row.reviewed = 1; updateCommentRow(row); }
+  });
+}
+
+function replyModal(r) {
+  S.modal({
+    title: "填写推荐回复",
+    body: `
+      <div class="form-row"><label>评论内容</label><div class="sub">${S.esc(r.content || "")}</div></div>
+      <div class="form-row"><label>推荐回复</label>
+        <textarea id="mReply" placeholder="填写审核前可使用的回复">${S.esc(r.reply || "")}</textarea></div>`,
+    okText: "保存回复",
+    onOk: async (body) => {
+      await S.commentApi("/comment/update", {
+        table: r.src_table,
+        id: r.src_pk,
+        reply_suggestion: body.querySelector("#mReply").value.trim(),
+      });
+      S.toast("回复已保存", "ok");
+      load();
+    },
+  });
+}
+
+function calibrationModal(r) {
+  S.modal({
+    title: "人工修正分析标签",
+    body: `
+      <div class="form-row"><label>评论内容</label><div class="sub">${S.esc(r.content || "")}</div></div>
+      <div class="form-row"><label>负面预警</label><select id="mNeg"><option value="0">否</option><option value="1" ${r.neg ? "selected" : ""}>是(负向)</option></select></div>
+      <div class="form-row"><label>购买意向</label><select id="mIntent"><option value="0">否</option><option value="1" ${r.intent ? "selected" : ""}>是(有意向)</option></select></div>
+      <div class="form-row"><label>校准原因</label><select id="mReason" required><option value="">请选择</option><option>意图误判</option><option>意图遗漏</option><option>正负向误判</option><option>褒贬混合未识别</option><option>高负向程度错误</option><option>情绪对象错误</option><option>缺少视频标题上下文</option><option>缺少父评论上下文</option><option>其他</option></select></div>
+      <div class="form-row"><label>校准备注(可选)</label><textarea id="mNote"></textarea></div>
+      <div class="form-row"><label>回复推荐(可选)</label><textarea id="mReply">${S.esc(r.reply || "")}</textarea></div>`,
+    okText: "保存修正",
+    onOk: async (body) => {
+      const reason = body.querySelector("#mReason").value;
+      const neg = body.querySelector("#mNeg").value === "1";
+      const intent = body.querySelector("#mIntent").value === "1";
+      const labelsChanged = neg !== !!r.neg || intent !== !!r.intent;
+      if (labelsChanged && !reason) throw new Error("修改意图或正负向时，请选择校准原因");
+      await S.commentApi("/comment/update", { table: r.src_table, id: r.src_pk, negative_alert: neg, purchase_intent: intent, reply_suggestion: body.querySelector("#mReply").value });
+      if (labelsChanged) {
+        await S.commentApi("/comment/calibration", {
+          table: r.src_table, id: r.src_pk, correction_reason: reason,
+          correction_note: body.querySelector("#mNote").value,
+          model_intents: r.intent ? ["购买意向"] : [], corrected_intents: intent ? ["购买意向"] : [],
+          model_sentiment: r.neg ? "negative" : "positive", corrected_sentiment: neg ? "negative" : "positive",
+          context_title: r.video_title || ""
+        });
+      }
+      S.toast("标签已修正", "ok");
+      r.neg = neg; r.intent = intent; r.reply = body.querySelector("#mReply").value; r.analyzed = 1;
+      updateCommentRow(r);
+    }
+  });
+}
+
+S.$("exportBtn").onclick = () => {
+  if (!rows.length) return S.toast("当前没有可导出的数据", "err");
+  const head = ["平台","评论内容","推荐回复","评论人","所属内容标题","作者昵称","内容ID","意图分析","正负向","状态","点赞","评论时间"];
+  const lines = [head.join(",")].concat(rows.map(r => [
+    r.platform, r.content || "", r.reply || "", r.nickname || "", r.video_title || "", r.author_nickname || "", r.content_id || "",
+    !r.analyzed ? "待分析" : (r.intent ? "有意图" : "无意图"),
+    !r.analyzed ? "待分析" : (r.neg ? "负向" : "正向"),
+    rowStatus(r).label,
+    r.likes || 0, S.fmtTs(r.ctime),
+  ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")));
+  const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `scrm_comments_${Date.now()}.csv`;
+  a.click();
+};
+
+// 恢复全部筛选和分页，同时兼容从视频列表带入的筛选。
+(() => {
+  const qs = new URLSearchParams(location.search);
+  Object.entries(filterFields).forEach(([key, id]) => {
+    S.$(id).value = qs.get(key) || "";
+  });
+  const savedPage = Number(qs.get("page"));
+  const savedSize = Number(qs.get("size"));
+  if (Number.isSafeInteger(savedPage) && savedPage > 0) page = savedPage;
+  if (Number.isSafeInteger(savedSize) && savedSize > 0) size = savedSize;
+})();
+
+load();
+</script>
+{% endblock %}

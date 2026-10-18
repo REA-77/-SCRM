@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}SCRM 工作台{% endblock %} · 觅牛文化</title>
+<link rel="stylesheet" href="/static/scrm/app.css">
+</head>
+<body data-active="{{ active }}">
+<header class="topbar">
+  <a href="/scrm/" class="logo">🛡 觅牛文化 SCRM <span class="tag">MVP</span></a>
+  <span class="muted" style="font-size:12.5px;">评论监控 · 智能分析 · 线索跟进 · 品牌触达</span>
+  <div class="spacer"></div>
+  <a class="nav-link" href="/" target="_blank">📊 数据总库</a>
+</header>
+
+<div class="layout">
+  <aside class="side">
+    <div class="group-label">评论监控引擎</div>
+    <a class="nav-item" data-key="overview" href="/scrm/"><span class="ico">📈</span>监控总览</a>
+    <a class="nav-item" data-key="comments" href="/scrm/comments"><span class="ico">💬</span>评论列表</a>
+    <a class="nav-item" data-key="videos" href="/scrm/videos"><span class="ico">🎬</span>视频列表</a>
+    <a class="nav-item" data-key="alerts" href="/scrm/alerts"><span class="ico">🚨</span>告警中心</a>
+
+    <div class="group-label">账号管理</div>
+    <a class="nav-item" data-key="creators" href="/scrm/creators"><span class="ico">👥</span>UP主管理</a>
+    <a class="nav-item" data-key="accounts" href="/scrm/accounts"><span class="ico">📱</span>平台运营账号</a>
+
+    <div class="group-label">智能分析与回复</div>
+    <a class="nav-item" data-key="workbench" href="/scrm/analysis"><span class="ico">🤖</span>智能分析工作台</a>
+    <a class="nav-item" data-key="auto_tasks" href="/scrm/auto-tasks"><span class="ico">▶</span>自动操作任务</a>
+    <a class="nav-item" data-key="skills" href="/scrm/skills"><span class="ico">🎭</span>人设 Skill</a>
+
+    <div class="group-label">线索跟进工作流</div>
+    <a class="nav-item" data-key="leads_overview" href="/scrm/leads/overview"><span class="ico">🧭</span>线索总览</a>
+    <a class="nav-item" data-key="leads" href="/scrm/leads"><span class="ico">📋</span>线索列表</a>
+    <a class="nav-item" data-key="lead_alerts" href="/scrm/leads/alerts"><span class="ico">⏰</span>异常告警</a>
+
+    <div class="group-label">品牌方触达</div>
+    <a class="nav-item" data-key="brands" href="/scrm/brands"><span class="ico">🏢</span>品牌聚合</a>
+    <a class="nav-item" data-key="brand_funnel" href="/scrm/brands/funnel"><span class="ico">🔻</span>转化漏斗</a>
+    <a class="nav-item" data-key="inquiries" href="/scrm/inquiries"><span class="ico">📨</span>商务询单</a>
+    <a class="nav-item" data-key="deals" href="/scrm/deals"><span class="ico">📑</span>商单管理</a>
+    <a class="nav-item" data-key="media" href="/scrm/media"><span class="ico">🤝</span>合作媒介</a>
+
+    <div class="group-label">系统设置</div>
+    <a class="nav-item" data-key="settings" href="/scrm/settings"><span class="ico">⚙️</span>设置管理</a>
+  </aside>
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<script src="/static/scrm/app.js"></script>
+<script>
+  // 侧边栏高亮
+  (() => {
+    const active = document.body.dataset.active;
+    document.querySelectorAll(".side .nav-item").forEach(a => {
+      if (a.dataset.key === active) a.classList.add("active");
+    });
+  })();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

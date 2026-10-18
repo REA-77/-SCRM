@@ -1,0 +1,146 @@
+{% extends "scrm/base.html" %}
+{% block title %}跟进工作流{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2><a href="/scrm/leads/{{ lid }}" style="font-size:15px;">← 返回线索详情</a></h2>
+    <div class="sub">线索 <b>#{{ lid }}</b> · 按标准状态机推进跟进</div>
+  </div>
+</div>
+
+<div id="root"><div class="loading"><span class="spin"></span> 加载中…</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const LID = {{ lid }};
+let d = null;
+
+const STEPS = [
+  { key: "new", label: "① 待联系", desc: "线索已入库,需在 24 小时内完成首次触达", cls: "" },
+  { key: "contacted", label: "② 首次联系", desc: "已触达客户,了解需求与预算,约定下次沟通", cls: "done" },
+  { key: "following", label: "③ 二次跟进", desc: "发送资料/报价,持续跟进客户决策进度", cls: "done" },
+  { key: "feedback", label: "④ 客户反馈", desc: "客户已反馈,临门一脚:解答疑虑、推动下单", cls: "done" },
+];
+
+function render() {
+  const l = d.lead;
+  const order = ["new", "contacted", "following", "feedback", "won", "lost"];
+  const curIdx = order.indexOf(l.status);
+
+  S.$("root").innerHTML = `
+    <div class="card">
+      <div class="card-title">🔄 跟进状态机
+        <span class="more">${S.platformTag(l.platform)} · ${S.esc(l.nickname || "匿名")} · 负责人:${S.esc(l.owner || "待分配")}</span>
+      </div>
+      <div class="pipeline">
+        ${STEPS.map((s, i) => `
+          <div class="stage ${curIdx >= i && curIdx < 4 ? "done" : ""}">
+            <div class="node">${s.label}<span class="num" style="font-size:13px;color:var(--text-3);font-weight:400;">${s.desc.split(",")[0] && ""}</span></div>
+          </div>`).join("")}
+        <div class="stage ${l.status === "won" ? "win" : l.status === "lost" ? "lose" : ""}">
+          <div class="node">⑤ 成交 / 流失</div>
+        </div>
+      </div>
+      <div class="mt12" style="text-align:center;">
+        ${l.status === "won" ? S.badge("🎉 该线索已成交", "green") :
+          l.status === "lost" ? S.badge("该线索已流失", "gray") :
+          S.badge("当前阶段:" + l.status_label, "primary", true)}
+      </div>
+    </div>
+
+    <div class="grid cards-2 mt16">
+      <div class="card">
+        <div class="card-title">👉 当前步骤操作</div>
+        ${stepPanel(l)}
+      </div>
+      <div class="card">
+        <div class="card-title">📨 通知记录
+          <span class="muted" style="font-weight:400;font-size:12px;">状态变更自动飞书通知负责人/上级</span>
+        </div>
+        <div class="timeline">
+          ${l.follows.length ? l.follows.slice(0, 8).map(f => `
+            <div class="tl-item ${f.action === "status" ? "" : "gray"}">
+              <div class="tl-time">${S.fmtTs(f.created_ts)}</div>
+              <div class="tl-action">${f.action === "status" ? "🔔 " + S.esc(f.content) : "📝 跟进登记"}</div>
+              ${f.action !== "status" ? `<div class="tl-content">${S.esc(f.content)}</div>` : ""}
+              <div class="tl-creator">${S.esc(f.creator)}</div>
+            </div>`).join("") : '<div class="muted" style="font-size:13px;">暂无通知与记录</div>'}
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt16">
+      <div class="card-title">💬 来源评论</div>
+      <div class="comment-bubble">${S.esc(l.content || "")}</div>
+      <div class="sub2 mt8">${S.esc(l.video_title || l.content_id || "-")} ·
+        <a href="/scrm/comments/${l.src_table}/${l.src_pk}">评论详情</a></div>
+    </div>`;
+}
+
+function stepPanel(l) {
+  if (l.status === "won" || l.status === "lost") {
+    return `<div class="empty" style="padding:24px;">
+      <div class="big">${l.status === "won" ? "🎉" : "🍃"}</div>
+      该线索已${l.status === "won" ? "成交" : "流失"},流程已结束。<br>
+      如需重新打开,请
+      <a href="/scrm/leads/${l.id}">在线索详情页</a>变更状态。</div>`;
+  }
+  const hint = {
+    new: { next: "contacted", btn: "📞 完成首次联系", tip: "完成首次触达后登记沟通要点,线索自动推进到「已联系」", action: "call" },
+    contacted: { next: "following", btn: "🔄 提交二次跟进", tip: "已与客户二次沟通,发送了资料或报价", action: "message" },
+    following: { next: "feedback", btn: "💬 记录客户反馈", tip: "客户给出明确反馈(比价/顾虑/决策时间)", action: "note" },
+    feedback: { next: "feedback", btn: "🤝 推进成交决策", tip: "最后阶段:可直接标记成交,或记录流失原因", action: "visit" },
+  }[l.status];
+  return `
+    <div style="background:var(--primary-soft);border-radius:8px;padding:11px 13px;font-size:13px;color:var(--primary);margin-bottom:12px;">
+      ${hint.tip}
+    </div>
+    <div class="form-row">
+      <label>${l.status === "new" ? "首次联系" : "跟进"}记录 *</label>
+      <textarea id="wfContent" placeholder="填写本次沟通内容、客户需求与承诺事项…"></textarea>
+    </div>
+    <div class="flex" style="gap:8px;flex-wrap:wrap;">
+      <button class="btn primary" id="wfAdvance">${hint.btn} → 下一步</button>
+      ${l.status === "feedback" ? `<button class="btn" style="color:var(--green);border-color:#bbf7d0;" id="wfWin">✅ 直接成交</button>
+        <button class="btn danger" id="wfLost">❌ 标记流失</button>` : ""}
+    </div>
+    <div class="muted mt12" style="font-size:12.5px;">
+      ⏰ 下次跟进截止:${l.due_ts ? S.fmtDate(l.due_ts) : "未设置"}
+      ${l.due_ts && l.due_ts < Date.now() / 1000 ? ' <span class="badge red">已超时</span>' : ""}
+    </div>`;
+}
+
+async function advance(status, action) {
+  const content = S.$("wfContent").value.trim();
+  if (status !== "won" && status !== "lost" && !content) {
+    return S.toast("请先填写跟进记录", "err");
+  }
+  if (content) {
+    await S.api(`/leads/${LID}/follow`, {
+      method: "POST", body: { action: action || "note", content, creator: "运营" },
+    });
+  }
+  if (status && (!content || content)) {
+    await S.api(`/leads/${LID}/update`, { method: "POST", body: { status } });
+  }
+  S.toast("已推进到下一阶段 🔔 飞书通知已发送", "ok");
+  load();
+}
+
+async function load() {
+  d = await S.api(`/leads/${LID}`);
+  render();
+  const l = d.lead;
+  if (!["won", "lost"].includes(l.status)) {
+    const next = { new: "contacted", contacted: "following", following: "feedback", feedback: "feedback" }[l.status];
+    const act = { new: "call", contacted: "message", following: "note", feedback: "visit" }[l.status];
+    const adv = S.$("wfAdvance");
+    if (adv) adv.onclick = () => advance(next, act);
+    if (S.$("wfWin")) S.$("wfWin").onclick = () => advance("won", "note");
+    if (S.$("wfLost")) S.$("wfLost").onclick = () => advance("lost", "note");
+  }
+}
+load().catch(e => S.$("root").innerHTML = `<div class="err-banner">${S.esc(e.message)}</div>`);
+</script>
+{% endblock %}

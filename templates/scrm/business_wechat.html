@@ -1,0 +1,14 @@
+{% extends "scrm/base.html" %}
+{% block title %}商务号设置{% endblock %}
+{% block content %}
+<div class="page-head"><div><h2>💬 商务号设置</h2><div class="sub">设置微信消息来源与商务组员的一对一匹配关系</div></div><button class="btn primary" id="addBtn">➕ 新增映射</button></div>
+<div class="card" style="padding:0"><div class="table-wrap"><table class="data"><thead><tr><th>商务号 / 微信账户</th><th>商务组员</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="tbody"><tr><td colspan="5" class="loading">加载中…</td></tr></tbody></table></div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+let rows=[];
+function modal(row){row=row||{};S.modal({title:row.id?"编辑商务号映射":"新增商务号映射",body:`<div class="form-row"><label>商务号 / 微信账户</label><input id="mWechat" value="${S.esc(row.wechat||"")}" placeholder="微信号"></div><div class="form-row"><label>商务组员</label><input id="mMember" value="${S.esc(row.member||"")}" placeholder="姓名"></div>`,okText:"保存",onOk:async b=>{const wechat=b.querySelector("#mWechat").value.trim(),member=b.querySelector("#mMember").value.trim();if(!wechat||!member)throw Error("微信号和商务组员必填");await S.api("/business-wechat/save",{method:"POST",body:{id:row.id,wechat,member}});S.toast("已保存","ok");load();}})}
+async function load(){const d=await S.api("/business-wechat");rows=d.rows;S.$("tbody").innerHTML=rows.map(r=>`<tr><td class="mono">${S.esc(r.wechat)}</td><td>${S.esc(r.member)}</td><td>${S.badge(r.status==="active"?"启用":"停用",r.status==="active"?"green":"gray")}</td><td>${S.fmtTs(r.updated_ts)}</td><td><button class="btn sm" data-id="${r.id}">编辑</button></td></tr>`).join("")||'<tr><td colspan="5" class="muted">暂无映射</td></tr>';S.$$("button[data-id]").forEach(b=>b.onclick=()=>modal(rows.find(r=>r.id==b.dataset.id)))}
+S.$("addBtn").onclick=()=>modal();load();
+</script>
+{% endblock %}

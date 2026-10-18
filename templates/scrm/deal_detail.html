@@ -1,0 +1,229 @@
+{% extends "scrm/base.html" %}
+{% block title %}商单详情{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2><a href="/scrm/deals" style="font-size:15px;">← 返回商单列表</a></h2>
+    <div class="sub" id="subTitle"></div>
+  </div>
+  <div class="actions">
+    <button class="btn" id="addAccountDealBtn">➕ 新增账户商单</button>
+    <button class="btn primary" id="addVideoBtn">➕ 添加展示视频</button>
+  </div>
+</div>
+
+<div id="root"><div class="loading"><span class="spin"></span> 加载中…</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DID = {{ did | tojson }};
+const STATUS_TEXT = { executing: "执行中", published: "已发布", won: "合作成功", kpi_done: "KPI已完成", ended: "已结束", canceled: "已取消" };
+const STATUS_COLOR = { executing: "primary", published: "teal", won: "green", kpi_done: "green", ended: "gray", canceled: "red" };
+let data = null;
+let autoEditOpened = false;
+function dateInputValue(ts) { if (!ts) return ""; const d = new Date(Number(ts) * 1000); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
+
+function videoModal(row = null) {
+  const accounts = (data.deal.platform_accounts || "").split(",").map(s => s.trim()).filter(Boolean);
+  const hasRecordId = !!(row && (row.id ?? row.video_id));
+  const editing = !!row;
+  const modal = S.modal({
+    title: editing ? "编辑展示视频" : "添加平台账户展示视频",
+    body: `
+      <div class="form-row"><label>发布平台</label>
+        <select id="vPlat">
+          <option value="">选择平台</option>
+          <option ${row?.platform === "B站" ? "selected" : ""}>B站</option><option ${row?.platform === "抖音" ? "selected" : ""}>抖音</option><option ${row?.platform === "视频号" ? "selected" : ""}>视频号</option><option ${row?.platform === "小红书" ? "selected" : ""}>小红书</option>
+          <option ${row?.platform === "快手" ? "selected" : ""}>快手</option><option ${row?.platform === "微博" ? "selected" : ""}>微博</option><option ${row?.platform === "知乎" ? "selected" : ""}>知乎</option>
+        </select></div>
+      <div class="form-row"><label>平台账户</label>
+        <input id="vAccount" list="accountList" value="${S.esc(row?.account || "")}" placeholder="选择或输入账户名">
+        <datalist id="accountList">${accounts.map(a => `<option value="${S.esc(a)}">`).join("")}</datalist></div>
+      <div class="form-row"><label>视频金额</label><input id="vAmount" type="number" step="0.01" value="${S.esc(row?.amount ?? data.deal.amount ?? "")}" placeholder="选填"></div>
+      <div class="form-row"><label>发布时间</label><input id="vPublish" type="datetime-local" value="${dateInputValue(row?.publish_ts)}"></div>
+      <div class="form-row"><label>视频链接</label><input id="vUrl" value="${S.esc(row?.url || "")}" placeholder="https://..."></div>`,
+    okText: "保存",
+    onOk: async (body) => {
+      const url = body.querySelector("#vUrl").value.trim();
+      if (!url) { S.toast("视频链接必填", "err"); return false; }
+      const publish = body.querySelector("#vPublish").value;
+      const payload = { platform: body.querySelector("#vPlat").value, account: body.querySelector("#vAccount").value.trim(), amount: body.querySelector("#vAmount").value || null, publish_ts: publish ? Math.floor(new Date(publish).getTime() / 1000) : null, url };
+      const updatePayload = {...payload, id: row?.id ?? row?.video_id ?? null, video_id: row?.id ?? row?.video_id ?? null, deal_id: DID, old_url: row?.url || ""};
+      await S.api(hasRecordId ? "/deals/video/update" : `/deals/${DID}/video`, { method: "POST", body: hasRecordId ? updatePayload : payload });
+      S.toast(editing ? "视频已保存" : "视频链接已添加", "ok");
+      load();
+    },
+  });
+}
+
+function addAccountDealsModal() {
+  let rows = [{platform:"", account:""}];
+  const platforms = ["B站","抖音","视频号","小红书","快手","微博","知乎"];
+  const syncRows = body => rows = rows.map((r,i)=>({platform:body.querySelector(`[data-p="${i}"]`)?.value || r.platform, account:body.querySelector(`[data-a="${i}"]`)?.value.trim() || r.account}));
+  const renderRows = body => { body.querySelector("#accountRows").innerHTML = rows.map((r,i) => `<div class="form-row" style="display:flex;gap:8px;align-items:center"><select data-p="${i}" style="flex:1"><option value="">选择平台</option>${platforms.map(p=>`<option ${p===r.platform?"selected":""}>${p}</option>`).join("")}</select><input data-a="${i}" value="${S.esc(r.account)}" placeholder="平台账户" style="flex:2"><button class="btn sm danger" data-del="${i}">删除</button></div>`).join(""); };
+  const modal = S.modal({title:"新增账户商单", wide:true, body:`<div class="sub" style="margin-bottom:10px">每个账户将创建一条新的商单，名称为“原询单名称-账户名称”。</div><div id="accountRows"></div><button class="btn sm" id="addAccountRow">➕ 添加平台账户</button>`, okText:"创建商单", onOk: async body => {
+    rows = rows.map((r,i)=>({platform:body.querySelector(`[data-p="${i}"]`).value,account:body.querySelector(`[data-a="${i}"]`).value.trim()})).filter(r=>r.platform&&r.account);
+    if(!rows.length){S.toast("请至少填写一个平台账户","err");return false;}
+    await S.api(`/deals/${DID}/accounts`,{method:"POST",body:{accounts:rows}}); S.toast("账户商单已创建","ok"); void load();
+  }});
+  renderRows(modal.bodyEl);
+  modal.bodyEl.querySelector("#addAccountRow").onclick=()=>{syncRows(modal.bodyEl);rows.push({platform:"",account:""});renderRows(modal.bodyEl);bind();};
+  function bind(){modal.bodyEl.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{syncRows(modal.bodyEl);rows.splice(Number(b.dataset.del),1);if(!rows.length)rows.push({platform:"",account:""});renderRows(modal.bodyEl);bind();});}
+  bind();
+}
+
+function statusModal() {
+  const modal = S.modal({
+    title: "更新商单状态",
+    body: `
+      <div class="form-row"><label>状态</label>
+        <select id="dStatus">${Object.entries(STATUS_TEXT).map(([k, v]) =>
+          `<option value="${k}" ${data.deal.status === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      <div class="form-row"><label>商单名称</label><input id="dName" value="${S.esc(data.deal.name || "")}"></div>
+      <div class="form-row"><label>品牌</label><input id="dBrand" value="${S.esc(data.deal.brand || "")}"></div>
+      <div class="form-row"><label>产品</label><input id="dProduct" value="${S.esc(data.deal.product || "")}"></div>
+      <div class="form-row"><label>媒介公司</label><input id="dMedia" value="${S.esc(data.deal.media_company || "")}"></div>
+      <div class="form-row"><label>商务负责人</label><input id="dOwner" value="${S.esc(data.deal.owner || "")}"></div>
+      <div class="form-row"><label>合作类型</label><input id="dCoop" value="${S.esc(data.deal.coop_types || "")}"></div>
+      <div class="form-row"><label>平台账号</label><input id="dAccounts" value="${S.esc(data.deal.platform_accounts || "")}"></div>
+      <div class="form-row"><label>备注</label>
+        <textarea id="dNote">${S.esc(data.deal.note || "")}</textarea></div>
+      <div class="form-row"><label>订单编号</label><input id="dOrderNo" value="${S.esc(data.deal.order_no || "")}"></div>
+      <div class="form-row"><label>品类</label><input id="dCategory" value="${S.esc(data.deal.category || "")}"></div>
+      <div class="form-row"><label>返点</label><input id="dRebate" type="number" step="0.01" value="${S.esc(data.deal.rebate ?? "")}"></div>
+      <div class="form-row"><label>媒介金额</label><input id="dMediaAmount" type="number" step="0.01" value="${S.esc(data.deal.media_amount ?? "")}"></div>
+      <div class="form-row"><label>商单金额</label><input id="dAmount" type="number" step="0.01" value="${S.esc(data.deal.amount ?? "")}"></div>
+      <div class="form-row"><label>KPI平台</label><select id="dKpiPlatform"><option value="">不自动计算</option>${(data.kpi_platforms || []).map(p => `<option ${data.deal.kpi_platform === p ? "selected" : ""}>${S.esc(p)}</option>`).join("")}</select></div>
+      <div class="form-row"><label>KPI播放</label><input id="dKpiViews" type="number" value="${S.esc(data.deal.kpi_views ?? "")}"></div>
+      <div class="form-row"><label>KPI互动</label><input id="dKpiInteractions" type="number" value="${S.esc(data.deal.kpi_interactions ?? "")}"></div>
+      <div class="form-row"><label>预计发布时间(时间戳)</label><input id="dExpectTs" type="number" value="${S.esc(data.deal.expect_ts ?? "")}"></div>`,
+    okText: "保存",
+    onOk: async (body) => {
+      await S.api(`/deals/${DID}/update`, { method: "POST", body: {
+        status: body.querySelector("#dStatus").value,
+        name: body.querySelector("#dName").value.trim(), brand: body.querySelector("#dBrand").value.trim(),
+        product: body.querySelector("#dProduct").value.trim(), media_company: body.querySelector("#dMedia").value.trim(),
+        owner: body.querySelector("#dOwner").value.trim(), coop_types: body.querySelector("#dCoop").value.trim(),
+        platform_accounts: body.querySelector("#dAccounts").value.trim(),
+        note: body.querySelector("#dNote").value,
+        order_no: body.querySelector("#dOrderNo").value.trim(),
+        category: body.querySelector("#dCategory").value.trim(),
+        rebate: body.querySelector("#dRebate").value || null,
+        media_amount: body.querySelector("#dMediaAmount").value || null,
+        amount: body.querySelector("#dAmount").value || null,
+        kpi_platform: body.querySelector("#dKpiPlatform").value || null,
+        kpi_views: body.querySelector("#dKpiViews").value || null,
+        kpi_interactions: body.querySelector("#dKpiInteractions").value || null,
+        expect_ts: body.querySelector("#dExpectTs").value || null,
+      }});
+      S.toast("已保存", "ok");
+      // 保存成功后立即关闭弹窗，详情数据在后台刷新，避免等待列表重绘阻塞关闭。
+      void load();
+    },
+  });
+}
+
+function render() {
+  const d = data.deal;
+  S.$("subTitle").textContent = d.name || "-";
+  document.title = `${d.name || "商单详情"} · 觅牛文化`;
+  S.$("root").innerHTML = `
+    <div class="grid cards-2" style="grid-template-columns:minmax(300px,.75fr) minmax(760px,1.9fr);">
+      <div>
+        <div class="card">
+          <div class="card-title">商单信息
+            <span class="more">${S.badge(d.display_status || STATUS_TEXT[d.status] || d.status, d.data_completed ? "green" : (STATUS_COLOR[d.status] || "gray"), true)} <button class="btn sm" id="editDealBtn">编辑</button></span>
+          </div>
+          <div class="kvlist">
+            <div class="k">商单名称</div><div class="v">${S.esc(d.name || "-")}</div>
+            <div class="k">订单编号</div><div class="v mono">${S.esc(d.order_no || "-")}</div>
+            <div class="k">品牌 / 产品</div><div class="v">${S.esc(d.brand || "-")} / ${S.esc(d.product || "-")}</div>
+            <div class="k">品类</div><div class="v">${S.esc(d.category || "-")}</div>
+            <div class="k">返点</div><div class="v">${S.esc(d.rebate ?? "-")}</div>
+            <div class="k">商单状态</div><div class="v">${S.badge(d.display_status || STATUS_TEXT[d.status] || d.status, d.data_completed ? "green" : (STATUS_COLOR[d.status] || "gray"), true)}</div>
+            <div class="k">完成时间</div><div class="v">${S.fmtTs(d.completed_ts)}</div>
+            <div class="k">媒介公司</div><div class="v">${S.esc(d.media_company || "-")}</div>
+            <div class="k">商务负责人</div><div class="v">${S.esc(d.owner || "-")}</div>
+            <div class="k">合作类型</div><div class="v">${S.esc(d.coop_types || "-")}</div>
+            <div class="k">平台账号</div><div class="v">${S.esc(d.platform_accounts || "-")}</div>
+            <div class="k">预计发布</div><div class="v">${S.fmtTs(d.expect_ts)}</div>
+            <div class="k">备注</div><div class="v">${S.esc(d.note || "—")}</div>
+            <div class="k">创建时间</div><div class="v">${S.fmtTs(d.created_ts)}</div>
+          </div>
+        </div>
+        ${data.inquiry ? `
+        <div class="card">
+          <div class="card-title">来源询单
+            <span class="more"><a class="btn sm ghost" href="/scrm/inquiries">查看询单 →</a></span>
+          </div>
+          <div class="kvlist">
+            <div class="k">询单编号</div><div class="v mono">#${S.esc(data.inquiry.inquiry_no || "-")}</div>
+            <div class="k">合作状态</div><div class="v">${S.badge(data.inquiry.status, data.inquiry.status === "合作成功" ? "green" : "gray", true)}</div>
+            <div class="k">联系人</div><div class="v">${S.esc(data.inquiry.contact || "-")}</div>
+            <div class="k">微信</div><div class="v">${S.esc(data.inquiry.wechat || "-")}</div>
+            <div class="k">跟进详情</div><div class="v">${S.esc(data.inquiry.follow_detail || "—")}</div>
+          </div>
+        </div>` : ""}
+      </div>
+
+      <div>
+        <div class="card">
+          <div class="card-title">📺 展示视频(${data.videos.length})
+            <span class="more"><button class="btn sm" id="addVideoBtn2">➕ 添加</button></span>
+          </div>
+          ${data.videos.length ? `<div class="table-wrap">
+            <table class="data">
+              <thead><tr>
+                <th style="width:64px;">平台</th><th style="width:150px;">账户</th><th style="width:90px;">金额</th><th style="width:110px;">KPI播放</th><th style="width:110px;">KPI互动</th><th style="min-width:180px;">视频标题</th><th style="width:130px;">发布时间</th><th style="width:82px;">视频状态</th><th style="width:110px;">操作</th>
+              </tr></thead>
+              <tbody>${data.videos.map(v => `<tr>
+                <td>${v.platform ? S.platformTag(v.platform) : '<span class="muted">—</span>'}</td>
+                <td>
+                  <div class="clamp">👤 ${S.esc(v.account || "-")}</div>
+                  <div class="sub2">${S.badge(v.category || "原创", v.category === "商单" ? "amber" : "gray")}</div>
+                </td>
+                <td class="mono">${v.amount == null ? "—" : S.esc(v.amount)}</td>
+                <td class="mono" style="${v.play_reached ? "color:#16a34a;font-weight:600;" : ""}">${v.kpi_views == null ? "—" : S.esc(v.kpi_views)}<div class="sub2" style="${v.play_reached ? "color:#16a34a;" : ""}">实际 ${v.actual_views == null ? "—" : S.esc(v.actual_views)}</div></td>
+                <td class="mono" style="${v.interaction_reached ? "color:#16a34a;font-weight:600;" : ""}">${v.kpi_interactions == null ? "—" : S.esc(v.kpi_interactions)}<div class="sub2" style="${v.interaction_reached ? "color:#16a34a;" : ""}">实际 ${v.actual_interactions == null ? "—" : S.esc(v.actual_interactions)}</div></td>
+                <td>${v.url ? `<a href="${S.esc(v.url)}" target="_blank" class="clamp">${S.esc(v.title || "打开视频")}</a>` : `<span class="muted">${S.esc(v.title || "待补充标题")}</span>`}</td>
+                <td class="nowrap muted">${S.fmtTs(v.publish_ts)}</td>
+                <td>${S.badge(v.video_status || "未达标", v.video_status === "已达标" ? "green" : "gray", true)}</td>
+                <td><button class="btn sm" data-edit-vid="${v.id ?? v.video_id ?? ''}">编辑</button> <button class="btn sm danger" data-vid="${v.id ?? v.video_id ?? ''}">删除</button></td>
+              </tr>`).join("")}</tbody>
+            </table>
+          </div>` : `<div class="empty"><div class="big">📺</div>暂无展示视频,点击「添加展示视频」补充平台账户对应的视频链接</div>`}
+        </div>
+      </div>
+    </div>`;
+  S.$("editDealBtn").onclick = statusModal;
+  S.$("addVideoBtn2").onclick = videoModal;
+  S.$$('[data-edit-vid]').forEach(b => b.onclick = () => {
+    const row = data.videos.find(v => Number(v.id) === Number(b.dataset.editVid));
+    if (row) videoModal(row);
+  });
+  S.$$(".btn.danger[data-vid]").forEach(b => b.onclick = () =>
+    S.confirm("确认删除该视频链接?", async () => {
+      await S.api("/deals/video/delete", { method: "POST", body: { id: Number(b.dataset.vid) } });
+      S.toast("已删除", "ok"); load();
+    }));
+}
+
+S.$("addVideoBtn").onclick = videoModal;
+S.$("addAccountDealBtn").onclick = addAccountDealsModal;
+async function load() {
+  try {
+    data = await S.api(`/deals/${DID}`);
+    render();
+    if (!autoEditOpened && new URLSearchParams(location.search).get("edit") === "1") {
+      autoEditOpened = true;
+      statusModal();
+    }
+  } catch (e) {
+    S.$("root").innerHTML = `<div class="err-banner">加载失败:${S.esc(e.message)}</div>`;
+  }
+}
+
+load();
+</script>
+{% endblock %}

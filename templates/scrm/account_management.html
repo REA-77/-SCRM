@@ -1,0 +1,23 @@
+{% extends "scrm/base.html" %}
+{% block title %}账号管理{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>👥 账号管理</h2>
+    <div class="sub">统一管理 UP 主档案与各平台运营账号的归属关系</div>
+  </div>
+</div>
+
+<div class="grid cards-2">
+  <a class="card module-card" href="/scrm/creators">
+    <div class="card-title">👥 UP主管理</div>
+    <div class="sub">维护昵称、账号等级、运营人员、出镜人、组别、绑定公司与商务联系方式。</div>
+    <div class="module-foot">进入 UP主管理 →</div>
+  </a>
+  <a class="card module-card" href="/scrm/accounts">
+    <div class="card-title">📱 平台运营账号</div>
+    <div class="sub">维护平台、昵称、账号 ID、粉丝、Bit 窗口，并关联到对应 UP 主。</div>
+    <div class="module-foot">进入平台运营账号 →</div>
+  </a>
+</div>
+{% endblock %}

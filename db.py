@@ -4,22 +4,25 @@ import json
 import logging
 import pymysql
 
-from config import DB_CONFIG, COMMENT_TABLES, COMMENT_NEW_COLUMNS
+from config import DB_CONFIG, COMMENT_TABLES, COMMENT_NEW_COLUMNS, CONTENT_TABLES
 
 logger = logging.getLogger("db")
 
 
-def get_conn():
-    return pymysql.connect(**DB_CONFIG)
+def get_conn(*, stream=False):
+    options = dict(DB_CONFIG)
+    if stream:
+        options['cursorclass'] = pymysql.cursors.SSDictCursor
+    return pymysql.connect(**options)
 
 
 # ---------- 表名白名单缓存 ----------
 _TABLES_CACHE = None
 
 
-def list_tables():
+def list_tables(refresh=False):
     global _TABLES_CACHE
-    if _TABLES_CACHE is not None:
+    if _TABLES_CACHE is not None and not refresh:
         return _TABLES_CACHE
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -102,4 +105,32 @@ def ensure_comment_columns():
                 logger.info("已为 %s 添加列 %s", table, col)
             except Exception as e:
                 logger.error("为 %s 添加列 %s 失败: %s", table, col, e)
+    return added
+
+
+def ensure_content_category_columns():
+    """为所有内容/视频表补齐分类和原链接字段。"""
+    added = []
+    for table in CONTENT_TABLES:
+        try:
+            existing = {c["name"] for c in get_columns(table)}
+        except Exception as e:
+            logger.warning("查询内容表 %s 列失败: %s", table, e)
+            continue
+        missing = []
+        if "category" not in existing:
+            missing.append("ADD COLUMN `category` VARCHAR(16) NOT NULL DEFAULT '原创' COMMENT '视频分类:商单/原创'")
+        if "original_url" not in existing:
+            missing.append("ADD COLUMN `original_url` VARCHAR(500) NULL COMMENT '原链接'")
+        if not missing:
+            continue
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    for statement in missing:
+                        cur.execute(f"ALTER TABLE `{table}` {statement}")
+                conn.commit()
+            added.extend(f"{table}.{name}" for name in ("category", "original_url") if name not in existing)
+        except Exception as e:
+            logger.error("为内容表 %s 添加 category 失败: %s", table, e)
     return added

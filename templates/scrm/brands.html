@@ -1,0 +1,98 @@
+{% extends "scrm/base.html" %}
+{% block title %}品牌聚合{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>🏢 品牌聚合</h2>
+    <div class="sub">品牌即合作媒介(询单合作成功自动沉淀),按商单「展示视频链接」聚合视频与评论声量</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/scrm/brands/funnel">🔻 品牌转化漏斗</a>
+    <input id="fQ" placeholder="搜索品牌名" style="padding:7px 12px;border:1px solid var(--border);border-radius:6px;">
+  </div>
+</div>
+
+<div class="grid cards-4" style="margin-bottom:14px;">
+  <div class="card stat-card kpi-primary">
+    <div class="kpi-ico">🏢</div>
+    <div class="kpi-label">合作品牌</div>
+    <div class="kpi-value" id="kBrands">—</div>
+    <div class="kpi-foot">合作媒介即品牌</div>
+  </div>
+  <div class="card stat-card kpi-teal">
+    <div class="kpi-ico">🎬</div>
+    <div class="kpi-label">展示视频</div>
+    <div class="kpi-value" id="kVideos">—</div>
+    <div class="kpi-foot">商单配置的展示视频链接</div>
+  </div>
+  <div class="card stat-card kpi-amber">
+    <div class="kpi-ico">🛒</div>
+    <div class="kpi-label">视频意向评论</div>
+    <div class="kpi-value" id="kIntent">—</div>
+    <div class="kpi-foot">展示视频下的购买意向</div>
+  </div>
+  <div class="card stat-card kpi-green">
+    <div class="kpi-ico">🤝</div>
+    <div class="kpi-label">合作中品牌</div>
+    <div class="kpi-value" id="kCoop">—</div>
+    <div class="kpi-foot">进入合作阶段</div>
+  </div>
+</div>
+
+<div id="grid" class="entity-grid"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let rows = [], statusMap = {};
+const SCOLOR = { new: "gray", touching: "primary", intent: "amber", cooperate: "green", lost: "gray" };
+
+async function load() {
+  S.$("grid").innerHTML = '<div class="loading"><span class="spin"></span> 聚合展示视频声量中…</div>';
+  const d = await S.api("/brands");
+  rows = d.rows;
+  statusMap = d.status_map || {};
+  S.$("kBrands").textContent = rows.length;
+  S.$("kVideos").textContent = rows.reduce((s, b) => s + b.video_count, 0).toLocaleString();
+  S.$("kIntent").textContent = rows.reduce((s, b) => s + b.intent_count, 0).toLocaleString();
+  S.$("kCoop").textContent = rows.filter(b => b.status === "cooperate").length;
+  render();
+}
+
+function render() {
+  const q = S.$("fQ").value.trim();
+  const list = rows.filter(b => !q || b.name.includes(q) || (b.party_a || "").includes(q));
+  if (!list.length) {
+    S.$("grid").innerHTML = S.empty(q ? "没有匹配的品牌" : "暂无合作品牌,询单标记「合作成功」后自动沉淀", "🏢");
+    return;
+  }
+  S.$("grid").innerHTML = list.map(b => `
+    <div class="entity-card" onclick="location.href='/scrm/brands/${b.id}'">
+      <div class="ec-head">
+        <div class="ec-logo">${S.esc(b.name.slice(0, 1))}</div>
+        <div style="flex:1;min-width:0;">
+          <div class="ec-name">${S.esc(b.name)}</div>
+          <div class="ec-meta">${S.badge(statusMap[b.status] || b.status, SCOLOR[b.status] || "gray", true)}
+            · ${S.esc(b.owner || "待分配")}</div>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:var(--text-3);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+        ${b.party_a ? `甲方主体:${S.esc(b.party_a)}` : S.esc(b.background || "暂无品牌背景,可在详情页补充")}
+      </div>
+      <div class="ec-stats">
+        <div class="s" style="color:var(--primary);"><b>${b.deal_count}</b><span>关联商单</span></div>
+        <div class="s" style="color:var(--teal);"><b>${b.video_count}</b><span>展示视频</span></div>
+        <div class="s"><b>${b.comment_count.toLocaleString()}</b><span>视频评论</span></div>
+        <div class="s" style="color:var(--amber);"><b>${b.intent_count}</b><span>购买意向</span></div>
+      </div>
+      <div class="ec-foot">
+        <span class="${b.matched_count ? "" : "muted"}">已匹配内容库:${b.matched_count}/${b.video_count} 条</span>
+        <span style="margin-left:auto;color:var(--red);">负面 ${b.negative_count}</span>
+      </div>
+    </div>`).join("");
+}
+
+S.$("fQ").addEventListener("input", render);
+load().catch(e => S.toast(e.message, "err"));
+</script>
+{% endblock %}

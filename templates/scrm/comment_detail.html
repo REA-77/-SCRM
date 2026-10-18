@@ -1,0 +1,212 @@
+{% extends "scrm/base.html" %}
+{% block title %}评论详情{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2><a id="backToComments" href="/scrm/comments" style="font-size:15px;">← 返回评论列表</a></h2>
+    <div class="sub mono">{{ table }} #{{ rid }}</div>
+  </div>
+  <div class="actions">
+    <a class="btn" id="leadLink" href="#" style="display:none;">🧭 查看对应线索</a>
+    <a class="btn" id="replyPageLink" href="/scrm/analysis/reply/{{ table }}/{{ rid }}">✍️ 推荐回复页</a>
+    <button class="btn" id="delReqBtn">🗑 请求自动删除</button>
+    <button class="btn primary" id="handleBtn">✅ 标记已处理</button>
+  </div>
+</div>
+
+<div id="root"><div class="loading"><span class="spin"></span> 加载中…</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const TABLE = {{ table | tojson }}, RID = {{ rid }};
+let data = null;
+const listQuery = new URLSearchParams(location.search).toString();
+const listSearch = listQuery ? "?" + listQuery : "";
+S.$("backToComments").href = "/scrm/comments" + listSearch;
+
+function tagCorrectModal() {
+  S.modal({
+    title: "人工修正分析标签",
+    body: `
+      <div class="form-row"><label>负面预警</label>
+        <select id="mNeg"><option value="0">否</option><option value="1" ${data.neg ? "selected" : ""}>是(负面)</option></select></div>
+      <div class="form-row"><label>购买意向</label>
+        <select id="mIntent"><option value="0">否</option><option value="1" ${data.intent ? "selected" : ""}>是(有意向)</option></select></div>
+      <div class="form-row"><label>校准原因</label>
+        <select id="mReason" required>
+          <option value="">请选择</option><option>意图误判</option><option>意图遗漏</option>
+          <option>正负向误判</option><option>褒贬混合未识别</option><option>高负向程度错误</option>
+          <option>情绪对象错误</option><option>缺少视频标题上下文</option><option>缺少父评论上下文</option><option>其他</option>
+        </select></div>
+      <div class="form-row"><label>校准备注(可选)</label><textarea id="mNote"></textarea></div>
+      <div class="form-row"><label>回复推荐(可选)</label>
+        <textarea id="mReply">${S.esc(data.reply || "")}</textarea></div>`,
+    okText: "保存修正",
+    onOk: async (body) => {
+      const reason = body.querySelector("#mReason").value;
+      if (!reason) throw new Error("请选择校准原因");
+      await S.commentApi("/comment/update", {
+        table: TABLE, id: RID,
+        negative_alert: body.querySelector("#mNeg").value === "1",
+        purchase_intent: body.querySelector("#mIntent").value === "1",
+        reply_suggestion: body.querySelector("#mReply").value,
+      });
+      await S.commentApi("/comment/calibration", {
+        table: TABLE, id: RID, correction_reason: reason,
+        correction_note: body.querySelector("#mNote").value,
+        model_intents: data.intent ? ["购买意向"] : [],
+        corrected_intents: body.querySelector("#mIntent").value === "1" ? ["购买意向"] : [],
+        model_sentiment: data.neg ? "negative" : "positive",
+        corrected_sentiment: body.querySelector("#mNeg").value === "1" ? "negative" : "positive",
+        context_title: (data.content_info || {}).title || "",
+        context_parent_comment: (data.thread || []).find(x => String(x.src_pk) === String(data.parent_comment_id || ""))?.content || "",
+      });
+      S.toast("标签已修正", "ok");
+      load();
+    },
+  });
+}
+
+function render() {
+  const r = data;
+  const ci = r.content_info || {};
+  S.$("handleBtn").textContent = r.handled ? "↩ 取消已处理" : "✅ 标记已处理";
+  S.$("delReqBtn").textContent = r.delreq ? "↩ 撤销删除请求" : "🗑 请求自动删除";
+  S.$("delReqBtn").classList.toggle("danger", !r.delreq);
+  S.$("leadLink").style.display = r.intent ? "inline-flex" : "none";
+
+  S.$("root").innerHTML = `
+    <div class="grid cards-2">
+      <div>
+        <div class="card">
+          <div class="card-title">评论原文
+            <span class="more">${S.platformTag(r.platform)}</span>
+          </div>
+          <div class="comment-bubble">${S.esc(r.content || "(空评论)")}</div>
+          <div class="flex mt12" style="gap:6px;flex-wrap:wrap;">
+            ${r.analyzed ? S.badge("已分析", "green", true) : S.badge("待分析", "gray", true)}
+            ${r.neg ? S.badge("负面预警", "red", true) : S.badge("情感正常", "green")}
+            ${r.intent ? S.badge("购买意向", "amber", true) : S.badge("无购买意向", "gray")}
+            ${r.handled ? S.badge("人工已处理", "teal", true) : S.badge("未处理", "gray")}
+            ${r.delreq ? S.badge("已请求删除", "red", true) : ""}
+            <button class="btn sm" style="margin-left:auto;" onclick="tagCorrectModal()">✏️ 人工修正</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">评论人信息</div>
+          <div class="kvlist">
+            <div class="k">昵称</div><div class="v">${S.esc(r.nickname || "匿名")}</div>
+            <div class="k">匿名标识</div><div class="v mono">${S.esc(r.creator_hash || "-")}</div>
+            <div class="k">点赞数</div><div class="v">${S.esc(r.likes || "0")}</div>
+            <div class="k">评论ID</div><div class="v mono">${S.esc(r.comment_id || "-")}</div>
+            <div class="k">评论时间</div><div class="v">${S.fmtTs(r.ctime)}</div>
+            <div class="k">入库时间</div><div class="v">${S.fmtTs(r.add_ts)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <div class="card-title">所属内容</div>
+          <div class="kvlist">
+            <div class="k">平台</div><div class="v">${S.platformTag(r.platform)}</div>
+            <div class="k">标题</div><div class="v">${S.esc(ci.title || r.content_id || "-")}
+              ${ci.url ? ` <a href="${S.esc(ci.url)}" target="_blank">🔗原内容</a>` : ""}</div>
+            <div class="k">UP主</div><div class="v">${S.esc(ci.upname || "-")}</div>
+            <div class="k">内容ID</div><div class="v mono">${S.esc(r.content_id || "-")}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">💡 AI 推荐回复
+            <span class="more"><button class="btn sm" id="regenBtn">🔄 重新生成</button></span>
+          </div>
+          <div class="reply-box" id="replyBox">${r.reply ? S.esc(r.reply) : '<span class="muted">暂无推荐回复,可在分析工作台或点击"重新生成"</span>'}</div>
+          <div class="flex mt12" style="gap:8px;">
+            <button class="btn" id="editReplyBtn">✏️ 编辑后保存</button>
+            <button class="btn primary" id="adoptBtn">👍 采纳并标记已处理</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">同内容近期评论</div>
+          <div class="table-wrap">
+            <table class="data">
+              <tbody>
+                ${r.thread.filter(t => t.src_pk !== RID).slice(0, 6).map(t => `
+                  <tr style="cursor:pointer;" onclick="location.href='/scrm/comments/${TABLE}/${t.src_pk}${S.esc(listSearch)}'">
+                    <td class="cell-content">
+                      ${t.neg ? '<span class="badge red">负</span>' : ""}
+                      ${t.intent ? '<span class="badge amber">购</span>' : ""}
+                      ${S.esc(String(t.content || "").slice(0, 60))}
+                      <div class="sub2">${S.esc(t.nickname || "匿名")} · ${S.ago(t.ctime)}</div>
+                    </td>
+                  </tr>`).join("") || '<tr><td class="muted">暂无其他评论</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  bindActions();
+}
+
+function bindActions() {
+  S.$("regenBtn").onclick = async (e) => {
+    const btn = e.target;
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 分析中';
+    try {
+      const res = await S.api(`/comment/${TABLE}/${RID}/analyze`, { method: "POST" });
+      S.toast("AI 分析完成", "ok");
+      await load();
+    } catch (err) {
+      S.toast(err.message, "err");
+      btn.disabled = false; btn.textContent = "🔄 重新生成";
+    }
+  };
+  S.$("editReplyBtn").onclick = () => {
+    S.modal({
+      title: "编辑推荐回复",
+      body: `<textarea id="replyEdit" style="width:100%;min-height:130px;" class="form-row">${S.esc(data.reply || "")}</textarea>`,
+      okText: "保存",
+      onOk: async (b) => {
+        await S.commentApi("/comment/update", { table: TABLE, id: RID, reply_suggestion: b.querySelector("#replyEdit").value });
+        S.toast("已保存", "ok"); load();
+      },
+    });
+  };
+  S.$("adoptBtn").onclick = async () => {
+    await S.commentApi("/comment/handle", { table: TABLE, id: RID, handled: 1 });
+    S.toast("已采纳推荐回复并标记处理", "ok"); load();
+  };
+}
+
+async function load() {
+  try {
+    data = await S.api(`/comment/${TABLE}/${RID}`);
+    render();
+    if (data.intent) {
+      const loc = await S.api(`/leads/locate?table=${encodeURIComponent(TABLE)}&pk=${RID}`);
+      if (loc.lead_id) S.$("leadLink").href = `/scrm/leads/${loc.lead_id}`;
+    }
+  } catch (e) {
+    S.$("root").innerHTML = `<div class="err-banner">加载失败:${S.esc(e.message)}</div>`;
+  }
+}
+
+S.$("handleBtn").onclick = async () => {
+  await S.commentApi("/comment/handle", { table: TABLE, id: RID, handled: data && !data.handled ? 1 : 0 });
+  S.toast(data && data.handled ? "已取消处理标记" : "已标记处理", "ok"); load();
+};
+S.$("delReqBtn").onclick = async () => {
+  const next = data && !data.delreq;
+  await S.commentApi("/comment/delete-request", { table: TABLE, id: RID, delete_requested: next ? 1 : 0 });
+  S.toast(next ? "已提交自动删除请求" : "已撤销删除请求", next ? "err" : "ok"); load();
+};
+
+load();
+</script>
+{% endblock %}

@@ -374,6 +374,7 @@
 <header>
   <h1>📊 媒体爬虫数据库 · media_crawler_pro</h1>
   <div class="meta">
+    <a href="/scrm/" target="_blank" style="margin-right:14px;font-weight:600;">🛡 SCRM 工作台 →</a>
     <span id="dbStatus">连接中…</span>
     <span class="dot">·</span>
     <span id="tableCount">— 张表</span>
@@ -517,7 +518,7 @@ async function loadTables() {
 function renderSidebar() {
   const sb = $("sidebar");
   sb.innerHTML = "";
-  const groupOrder = ["账号管理","跨平台热搜","B站","抖音","快手","微博","小红书","知乎","贴吧","Reddit","其他"];
+  const groupOrder = ["账号管理","跨平台热搜","B站","视频号","抖音","快手","微博","小红书","知乎","贴吧","Reddit","其他"];
   const keys = Object.keys(state.groups);
   const ordered = [...keys].sort((a,b) => {
     const ia = groupOrder.indexOf(a), ib = groupOrder.indexOf(b);
@@ -694,6 +695,7 @@ function toggleDetail(tr, idx) {
     const neg = getV("negative_alert") === "1";
     const intent = getV("purchase_intent") === "1";
     const handled = getV("handled") === "1";
+    const deleteRequested = getV("delete_requested") === "1";
     actions = `<div class="detail-actions">
       <div class="da-title">🛠 分析结果人工处理${handled ? ' · <span style="color:#0d9488">✅ 已处理,守护进程不再分析本条</span>' : ""}</div>
       <textarea id="daReply_${idx}" placeholder="建议回复(可人工修改后保存)">${escapeHtml(getV("reply_suggestion"))}</textarea>
@@ -704,6 +706,7 @@ function toggleDetail(tr, idx) {
       <div class="da-row">
         <button type="button" class="btn primary" onclick="saveAnalysis(${idx})">💾 保存修改</button>
         <button type="button" class="tag-btn${handled ? " on-handled" : ""}" onclick="toggleHandled(${idx})">${handled ? "✅ 已处理(点击取消)" : "标记为已处理"}</button>
+        <button type="button" class="tag-btn${deleteRequested ? " on-handled" : ""}" onclick="toggleDeleteRequest(${idx})">${deleteRequested ? "🗑️ 已请求删除(点击取消)" : "🗑️ 请求自动删除"}</button>
       </div>
     </div>`;
   }
@@ -712,6 +715,23 @@ function toggleDetail(tr, idx) {
   detailTr.innerHTML = `<td colspan="${cols.length}"><div class="detail-grid">${grid}</div>${actions}</td>`;
   tr.after(detailTr);
   tr.classList.add("expanded");
+}
+
+async function toggleDeleteRequest(idx) {
+  const cols = state.curColumns, row = state.rows[idx];
+  const jId = cols.findIndex(c => c.name === "id");
+  const jDelete = cols.findIndex(c => c.name === "delete_requested");
+  const newValue = jDelete >= 0 && String(row[jDelete]) === "1" ? 0 : 1;
+  try {
+    const r = await fetch(`${API}/comment/delete-request`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: state.curTable, id: row[jId], delete_requested: newValue }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "操作失败");
+    toast(newValue ? "已加入自动删除队列" : "已取消自动删除");
+    await loadData();
+  } catch (e) { toast("删除操作设置失败:" + e.message); }
 }
 
 // 切换标签按钮选中态(仅前端样式,保存时一起提交)

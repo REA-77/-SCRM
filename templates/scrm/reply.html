@@ -1,0 +1,168 @@
+{% extends "scrm/base.html" %}
+{% block title %}推荐回复{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2><a href="/scrm/analysis" style="font-size:15px;">← 返回分析工作台</a></h2>
+    <div class="sub mono">{{ table }} #{{ rid }}</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/scrm/comments/{{ table }}/{{ rid }}">查看评论详情</a>
+  </div>
+</div>
+
+<div class="grid cards-2">
+  <div>
+    <div class="card">
+      <div class="card-title">原始评论 <span class="more" id="platTag"></span></div>
+      <div class="comment-bubble" id="originBox"><span class="spin"></span> 加载中…</div>
+      <div class="kvlist mt12">
+        <div class="k">评论人</div><div class="v" id="nickBox">—</div>
+        <div class="k">所属内容</div><div class="v" id="videoBox">—</div>
+        <div class="k">标签</div><div class="v" id="tagBox">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🎭 匹配 UP主人设 Skill</div>
+      <div id="skillBox" class="muted">加载中…</div>
+      <div class="muted mt8" style="font-size:12.5px;">回复将优先匹配同平台且绑定该 UP 主的人设 Skill;无匹配时默认使用任意一个可用 Skill。可在「人设 Skill」页维护。</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-title">✍️ 推荐回复
+        <span class="more">
+          <button class="btn sm" id="regenBtn">🔄 重新生成</button>
+        </span>
+      </div>
+      <textarea id="replyEdit"
+        style="width:100%;min-height:180px;border:1px solid var(--border);border-radius:10px;padding:13px 14px;font-size:14px;line-height:1.7;font-family:inherit;resize:vertical;"
+        placeholder="AI 推荐回复将显示在这里,可直接编辑"></textarea>
+      <div class="flex mt12" style="justify-content:space-between;gap:8px;flex-wrap:wrap;">
+        <span class="muted" id="wordCount" style="font-size:12px;">0 字</span>
+        <div class="flex" style="gap:8px;">
+          <button class="btn" id="rejectBtn">👎 驳回(转人工)</button>
+          <button class="btn" id="saveBtn">💾 保存编辑</button>
+          <button class="btn primary" id="adoptBtn">👍 采纳并标记已处理</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">💡 回复要点提示</div>
+      <ul style="margin:0;padding-left:20px;color:var(--text-2);font-size:13px;line-height:2;">
+        <li>购买意向评论:给出型号/选购建议,温和引导下单决策</li>
+        <li>负面评论:先共情致歉,再给解决方案,避免争辩</li>
+        <li>回复控制在 10-50 字,口语化,符合 UP 主人设</li>
+        <li>采纳后评论进入已处理,守护进程不再重复分析</li>
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const TABLE = {{ table | tojson }}, RID = {{ rid }};
+let comment = null;
+
+async function loadComment() {
+  comment = await S.api(`/comment/${TABLE}/${RID}`);
+  S.$("platTag").innerHTML = S.platformTag(comment.platform);
+  S.$("originBox").textContent = comment.content || "(空评论)";
+  S.$("nickBox").textContent = comment.nickname || "匿名";
+  const ci = comment.content_info || {};
+  S.$("videoBox").innerHTML = (ci.title || comment.content_id || "-") +
+    (ci.url ? ` <a href="${S.esc(ci.url)}" target="_blank">🔗</a>` : "");
+  S.$("tagBox").innerHTML = [
+    comment.neg ? S.badge("负面", "red", true) : null,
+    comment.intent ? S.badge("购买意向", "amber", true) : null,
+    comment.analyzed ? S.badge("已分析", "green") : S.badge("待分析", "gray"),
+    comment.handled ? S.badge("已处理", "teal") : null,
+  ].filter(Boolean).join(" ") || "—";
+  S.$("replyEdit").value = comment.reply && !String(comment.reply).startsWith("⚠") ? comment.reply : "";
+  updateCount();
+}
+
+async function loadSkill() {
+  try {
+    const d = await S.api("/skills");
+    const rows = d.rows || [];
+    if (!rows.length) {
+      S.$("skillBox").innerHTML = '<span class="muted">尚未创建任何人设 Skill</span>';
+      return;
+    }
+    const upname = ((comment.content_info || {}).upname || "").trim();
+    // 匹配优先级:同平台+绑定该UP主 > 同平台 > 任意一个(兜底默认)
+    let match = rows.find(s => s.platform === comment.platform && upname &&
+                             (s.bind_up || "") === upname)
+             || rows.find(s => s.platform === comment.platform)
+             || rows[0];
+    const isFallback = !(match.platform === comment.platform);
+    S.$("skillBox").innerHTML = `
+      <div class="flex" style="align-items:flex-start;gap:12px;">
+        <div class="ec-logo" style="width:40px;height:40px;border-radius:10px;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:18px;">🎭</div>
+        <div style="flex:1;">
+          <b>${S.esc(match.name)}</b> ${S.platformTag(S.esc(match.platform || ""))}
+          ${S.badge("已绑定 " + (match.bind_up || "-"), "primary")}
+          ${isFallback ? S.badge("默认匹配", "gray", true) : ""}
+          <div class="muted mt8" style="font-size:13px;">${S.esc(match.style || "")}</div>
+          <div class="mt8" style="font-size:13px;background:#f7f8fb;border-radius:8px;padding:9px 11px;">
+            <span class="muted">示例:</span>${S.esc(match.example || "")}
+          </div>
+          ${isFallback ? '<div class="muted mt8" style="font-size:12px;">没有匹配到本平台的人设 Skill,已默认使用「' + S.esc(match.name) + '」的风格。</div>' : ''}
+        </div>
+      </div>`;
+  } catch (e) {
+    S.$("skillBox").textContent = "Skill 加载失败";
+  }
+}
+
+function updateCount() {
+  S.$("wordCount").textContent = (S.$("replyEdit").value.length) + " 字";
+}
+S.$("replyEdit").oninput = updateCount;
+
+S.$("regenBtn").onclick = async () => {
+  const btn = S.$("regenBtn");
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 生成中';
+  try {
+    const res = await S.api(`/comment/${TABLE}/${RID}/analyze`, { method: "POST" });
+    S.$("replyEdit").value = res.reply;
+    updateCount();
+    S.toast("已重新生成回复", "ok");
+  } catch (e) { S.toast(e.message, "err"); }
+  btn.disabled = false; btn.textContent = "🔄 重新生成";
+};
+
+S.$("saveBtn").onclick = async () => {
+  await S.commentApi("/comment/update", { table: TABLE, id: RID, reply_suggestion: S.$("replyEdit").value });
+  S.toast("回复已保存", "ok");
+};
+
+S.$("adoptBtn").onclick = async () => {
+  const text = S.$("replyEdit").value.trim();
+  if (!text) return S.toast("回复内容为空,无法采纳", "err");
+  await S.commentApi("/comment/update", { table: TABLE, id: RID, reply_suggestion: text });
+  await S.commentApi("/comment/handle", { table: TABLE, id: RID, handled: 1 });
+  S.toast("已采纳并标记处理 ✅", "ok");
+};
+
+S.$("rejectBtn").onclick = async () => {
+  await S.commentApi("/comment/handle", { table: TABLE, id: RID, handled: 1 });
+  S.toast("已驳回,转入人工处理队列", "ok");
+};
+
+(async () => {
+  try {
+    await loadComment();
+    loadSkill();
+  } catch (e) {
+    S.$("originBox").textContent = "加载失败:" + e.message;
+    S.toast(e.message, "err");
+  }
+})();
+</script>
+{% endblock %}

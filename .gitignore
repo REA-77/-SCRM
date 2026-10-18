@@ -21,3 +21,16 @@ env/
 # 系统
 .DS_Store
 Thumbs.db
+
+# Zhihu runtime dependencies and login sessions
+zhihu-mcp-master/.deps/
+zhihu-mcp-master/cookies/
+
+# 本地运行记录与同步缓存
+.workbuddy/
+.sheet-sync/node_modules/
+platform_accounts_import.json
+persona-preview.json
+bitbrowser_headless_windows.json
+douyin-creator-tools/
+app-runtime*.log

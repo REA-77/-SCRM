@@ -1,0 +1,137 @@
+{% extends "scrm/base.html" %}
+{% block title %}评论监控总览{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>📈 评论监控总览</h2>
+    <div class="sub">全局查看抖音 / 视频号 / 小红书等平台的评论抓取与舆情状态</div>
+  </div>
+  <div class="actions">
+    <select id="rangeSel" class="btn" style="padding:7px 10px;">
+      <option value="all">全部时间</option>
+      <option value="7">近 7 天</option>
+      <option value="30" selected>近 30 天</option>
+      <option value="90">近 90 天</option>
+    </select>
+    <button class="btn" id="refreshBtn">🔄 刷新</button>
+  </div>
+</div>
+
+<div class="grid cards-4">
+  <div class="card stat-card kpi-teal">
+    <div class="kpi-ico">💬</div>
+    <div class="kpi-label">今日抓取评论</div>
+    <div class="kpi-value" id="kpiToday">—</div>
+    <div class="kpi-foot">各平台爬虫实时入库</div>
+  </div>
+  <div class="card stat-card kpi-red">
+    <div class="kpi-ico">🚨</div>
+    <div class="kpi-label">待处理告警</div>
+    <div class="kpi-value" id="kpiAlert">—</div>
+    <div class="kpi-foot"><a href="/scrm/alerts">前往告警中心 →</a></div>
+  </div>
+  <div class="card stat-card kpi-amber">
+    <div class="kpi-ico">⚠️</div>
+    <div class="kpi-label">负面评论总数</div>
+    <div class="kpi-value" id="kpiNeg">—</div>
+    <div class="kpi-foot">AI 情感识别累计</div>
+  </div>
+  <div class="card stat-card kpi-primary">
+    <div class="kpi-ico">🎬</div>
+    <div class="kpi-label">覆盖视频/笔记</div>
+    <div class="kpi-value" id="kpiVideo">—</div>
+    <div class="kpi-foot">有评论数据的内容数</div>
+  </div>
+</div>
+
+<div class="grid cards-2 mt16">
+  <div class="card">
+    <div class="card-title">负面评论趋势 <span class="more">近 14 天 · 按评论发布时间</span></div>
+    <div id="trendChart" class="chart-wrap"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">平台评论分布</div>
+    <div id="platformChart" class="chart-wrap"></div>
+  </div>
+</div>
+
+<div class="grid cards-2 mt16">
+  <div class="card">
+    <div class="card-title">UP主 / 创作者分布 <span class="more">按监控内容数 Top 10</span></div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>UP主 / 创作者</th><th>平台</th><th class="right">监控内容数</th></tr></thead>
+        <tbody id="creatorBody"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">最近负面告警 <span class="more"><a href="/scrm/alerts">全部告警 →</a></span></div>
+    <div class="table-wrap">
+      <table class="data">
+        <thead><tr><th>评论</th><th>平台</th><th>时间</th></tr></thead>
+        <tbody id="alertBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const COLORS = { total: "#4f46e5", neg: "#dc2626", intent: "#d97706" };
+const PLATFORM_COLORS = { "抖音": "#111111", "视频号": "#07c160", "小红书": "#ff2442",
+  "B站": "#00a1d6", "微博": "#e6162d", "快手": "#ff7800", "知乎": "#0066ff",
+  "贴吧": "#2b7bde", "Reddit": "#ff4500" };
+const PALETTE = ["#4f46e5", "#0d9488", "#d97706", "#dc2626", "#7c3aed",
+  "#0891b2", "#65a30d", "#db2777", "#57534e"];
+
+async function load() {
+  S.$("trendChart").innerHTML = S.loading();
+  S.$("platformChart").innerHTML = S.loading();
+  try {
+    const d = await S.api("/overview");
+    S.$("kpiToday").textContent = d.cards.today_comments.toLocaleString();
+    S.$("kpiAlert").textContent = d.cards.pending_alerts.toLocaleString();
+    S.$("kpiNeg").textContent = d.cards.negative_total.toLocaleString();
+    S.$("kpiVideo").textContent = d.cards.video_cover.toLocaleString();
+
+    S.lineChart(S.$("trendChart"), d.trend.map(t => t.date), [
+      { name: "评论总量", data: d.trend.map(t => t.total), color: COLORS.total, area: true },
+      { name: "负面", data: d.trend.map(t => t.neg), color: COLORS.neg },
+      { name: "购买意向", data: d.trend.map(t => t.intent), color: COLORS.intent },
+    ]);
+
+    const pitems = d.platforms
+      .filter(p => p.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .map((p, i) => ({
+        name: p.platform,
+        value: Number(p.total),
+        color: PLATFORM_COLORS[p.platform] || PALETTE[i % PALETTE.length],
+      }));
+    S.donut(S.$("platformChart"), pitems, "评论量");
+
+    S.$("creatorBody").innerHTML = d.top_creators.length ? d.top_creators.map(c => `
+      <tr>
+        <td>${S.esc(c.upname || "匿名创作者")}</td>
+        <td>${S.platformTag(c.platform)}</td>
+        <td class="right"><b>${c.videos}</b></td>
+      </tr>`).join("") : `<tr><td colspan="3" class="muted" style="text-align:center;padding:24px;">暂无监控内容</td></tr>`;
+
+    S.$("alertBody").innerHTML = d.recent_alerts.length ? d.recent_alerts.map(a => `
+      <tr class="row-neg" style="cursor:pointer;" onclick="location.href='/scrm/comments/${a.src_table}/${a.src_pk}'">
+        <td class="cell-content"><div class="clamp">${S.esc(a.content)}</div>
+          <div class="sub2">${S.esc(a.nickname || "匿名")}</div></td>
+        <td>${S.platformTag(a.platform)}</td>
+        <td class="nowrap muted">${S.ago(a.ctime)}</td>
+      </tr>`).join("") : `<tr><td colspan="3" class="muted" style="text-align:center;padding:24px;">🎉 暂无负面告警</td></tr>`;
+  } catch (e) {
+    S.toast(e.message, "err");
+  }
+}
+S.$("refreshBtn").onclick = load;
+S.$("rangeSel").onchange = load;
+load();
+</script>
+{% endblock %}

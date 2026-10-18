@@ -1,0 +1,199 @@
+{% extends "scrm/base.html" %}
+{% block title %}品牌详情{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2><a href="/scrm/brands" style="font-size:15px;">← 返回品牌聚合</a></h2>
+    <div class="sub">合作媒介(品牌)信息、商单展示视频声量与跟进台账</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/scrm/media">🤝 合作媒介资料</a>
+    <a class="btn" href="/scrm/brands/funnel">🔻 查看转化漏斗</a>
+    <button class="btn" id="editBtn">✏️ 编辑品牌信息</button>
+    <button class="btn primary" id="followBtn">➕ 新增跟进记录</button>
+  </div>
+</div>
+
+<div id="root"><div class="loading"><span class="spin"></span> 加载中…</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const BID = {{ bid }};
+let d = null;
+const SCOLOR = { new: "gray", touching: "primary", intent: "amber", cooperate: "green", lost: "gray" };
+const DEAL_S = { executing: ["执行中", "amber"], published: ["已发布", "primary"], won: ["合作成功", "green"] };
+
+function render() {
+  const b = d.brand;
+  S.$("root").innerHTML = `
+    <div class="card">
+      <div class="flex" style="gap:14px;align-items:center;flex-wrap:wrap;">
+        <div class="ec-logo" style="width:52px;height:52px;font-size:22px;border-radius:12px;">${S.esc(b.name.slice(0, 1))}</div>
+        <div style="flex:1;min-width:240px;">
+          <div style="font-size:20px;font-weight:700;">${S.esc(b.name)}
+            ${S.badge(d.statuses.find(s => s[0] === b.status)?.[1] || b.status, SCOLOR[b.status] || "gray", true)}
+            ${b.source === "auto" ? S.badge("询单联动", "primary") : S.badge("手动录入", "gray")}
+          </div>
+          <div class="muted mt8">负责人:${S.esc(b.owner || "待分配")} · 甲方主体:${S.esc(b.party_a || "待补充")}
+            · 联系人:${S.esc(b.contact || "—")}${b.phone ? " / " + S.esc(b.phone) : ""}</div>
+        </div>
+        <div class="flex" style="gap:22px;">
+          <div style="text-align:center;"><b style="font-size:22px;color:var(--primary);">${b.deal_count}</b><div class="muted" style="font-size:12px;">关联商单</div></div>
+          <div style="text-align:center;"><b style="font-size:22px;color:var(--teal);">${b.video_count}</b><div class="muted" style="font-size:12px;">展示视频</div></div>
+          <div style="text-align:center;"><b style="font-size:22px;">${b.comment_count.toLocaleString()}</b><div class="muted" style="font-size:12px;">视频评论</div></div>
+          <div style="text-align:center;"><b style="font-size:22px;color:var(--amber);">${b.intent_count}</b><div class="muted" style="font-size:12px;">购买意向</div></div>
+          <div style="text-align:center;"><b style="font-size:22px;color:var(--red);">${b.negative_count}</b><div class="muted" style="font-size:12px;">负面提及</div></div>
+        </div>
+      </div>
+      <div class="mt12" style="font-size:13.5px;color:var(--text-2);background:#f7f8fb;border-radius:8px;padding:11px 13px;">
+        ${S.esc(b.background || "暂无品牌背景介绍")}
+      </div>
+    </div>
+
+    <div class="card mt16">
+      <div class="card-title">📑 关联商单 <span class="n">${d.deals.length}</span></div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>商单名称</th><th style="width:110px;">品牌/产品</th><th style="width:90px;">状态</th><th style="width:90px;">操作</th></tr></thead>
+          <tbody>
+            ${d.deals.length ? d.deals.map(x => `
+              <tr>
+                <td><div class="clamp">${S.esc(x.name)}</div></td>
+                <td class="muted">${S.esc(x.brand || "-")} / ${S.esc(x.product || "-")}</td>
+                <td>${S.badge((DEAL_S[x.status] || [x.status])[0], (DEAL_S[x.status] || ["gray"])[1])}</td>
+                <td><a class="btn sm" href="/scrm/deals/${x.id}">打开商单</a></td>
+              </tr>`).join("")
+              : '<tr><td colspan="4" class="muted" style="text-align:center;padding:16px;">暂无关联商单</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid cards-2 mt16">
+      <div class="card">
+        <div class="card-title">📒 跟进台账</div>
+        ${d.follows.length ? `<div class="timeline">${d.follows.map(f => `
+          <div class="tl-item">
+            <div class="tl-time">${S.fmtTs(f.created_ts)} · <span class="tl-creator">${S.esc(f.creator)}</span></div>
+            <div class="tl-content">${S.esc(f.content)}</div>
+            ${f.next_plan ? `<div class="sub2 mt8">📌 下一步:${S.esc(f.next_plan)}</div>` : ""}
+          </div>`).join("")}</div>` : S.empty("还没有跟进记录,点击右上角新增", "📒")}
+      </div>
+      <div class="card">
+        <div class="tabs">
+          <button data-tab="videos" class="active">🎬 展示视频 <span class="n">${b.video_count}</span></button>
+          <button data-tab="comments">💬 视频评论 <span class="n">${b.comment_count}</span></button>
+        </div>
+        <div id="mentionBox"></div>
+      </div>
+    </div>`;
+
+  renderMentions("videos");
+  S.$$(".tabs button").forEach(btn => btn.onclick = () => {
+    S.$$(".tabs button").forEach(x => x.classList.remove("active"));
+    btn.classList.add("active");
+    renderMentions(btn.dataset.tab);
+  });
+}
+
+function renderMentions(tab) {
+  const box = S.$("mentionBox");
+  if (tab === "videos") {
+    const vids = d.video_samples || [];
+    box.innerHTML = vids.length ? `
+      <div style="max-height:480px;overflow-y:auto;">
+      ${vids.map(v => `
+      <div style="padding:10px 2px;border-bottom:1px solid var(--border);">
+        <div class="flex" style="gap:8px;align-items:flex-start;">
+          ${S.platformTag(v.platform || v.m_platform || "")}
+          <div style="flex:1;min-width:0;">
+            <a href="${S.esc(v.url || "#")}" target="_blank">${S.esc(String(v.title || v.m_title || "(未命名展示视频)").slice(0, 80))}</a>
+            <div class="sub2">
+              ${v.account ? "账户:" + S.esc(v.account) + " · " : ""}
+              ${v.matched
+                ? `✅ 已匹配内容库 · UP主:${S.esc(v.m_upname || "-")}`
+                : '<span class="muted">⚠️ 未匹配到内容库(视频可能未爬取)</span>'}
+            </div>
+          </div>
+        </div>
+      </div>`).join("")}
+      </div>` : S.empty("暂无展示视频,请到商单详情页添加视频链接", "🎬");
+  } else {
+    const cs = d.comment_samples || [];
+    box.innerHTML = cs.length ? `
+      <div style="max-height:480px;overflow-y:auto;">
+      ${cs.map(c => `
+      <div style="padding:9px 2px;border-bottom:1px solid var(--border);">
+        <div class="flex" style="gap:6px;">
+          ${S.platformTag(c.platform)}
+          <span class="muted" style="font-size:12px;">${S.esc(c.nickname || "匿名")} · ${S.ago(c.ctime)}</span>
+          ${c.neg ? S.badge("负面", "red") : ""}
+          ${c.intent ? S.badge("意向", "amber") : ""}
+          <a style="margin-left:auto;font-size:12px;" href="/scrm/comments/${c.src_table}/${c.src_pk}">详情</a>
+        </div>
+        <div style="font-size:13px;margin-top:4px;">${S.esc(String(c.content || "").slice(0, 110))}</div>
+      </div>`).join("")}
+      </div>` : S.empty("展示视频下暂无已爬取评论", "💬");
+  }
+}
+
+function editModal() {
+  const b = d.brand;
+  S.modal({
+    title: "编辑品牌信息",
+    body: `
+      <div class="form-grid">
+        <div class="form-row"><label>跟进状态</label>
+          <select id="fStatus">${d.statuses.map(s =>
+            `<option value="${s[0]}" ${s[0] === b.status ? "selected" : ""}>${s[1]}</option>`).join("")}</select></div>
+        <div class="form-row"><label>负责人</label>
+          <select id="fOwner"><option value="">待分配</option>
+            ${d.team.map(t => `<option ${t === b.owner ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+      </div>
+      <div class="form-row"><label>品牌背景</label>
+        <textarea id="fBg">${S.esc(b.background || "")}</textarea></div>
+      <div class="sub2">甲方主体、联系人、手机号等资料请到「合作媒介」页维护</div>`,
+    okText: "保存",
+    onOk: async (el) => {
+      await S.api(`/brands/${BID}/update`, { method: "POST", body: {
+        status: el.querySelector("#fStatus").value,
+        owner: el.querySelector("#fOwner").value || null,
+        background: el.querySelector("#fBg").value,
+      }});
+      S.toast("品牌信息已保存", "ok");
+      load();
+    },
+  });
+}
+
+function followModal() {
+  S.modal({
+    title: "新增品牌跟进记录",
+    body: `
+      <div class="form-row"><label>跟进内容 *</label>
+        <textarea id="fContent" placeholder="如:已通过商务渠道联系品牌市场部,对方对测评合作感兴趣,下周约线上会"></textarea></div>
+      <div class="form-row"><label>下一步计划</label>
+        <input id="fPlan" placeholder="如:9月30日前发送合作方案与报价"></div>`,
+    okText: "提交记录",
+    onOk: async (el) => {
+      const content = el.querySelector("#fContent").value.trim();
+      if (!content) { S.toast("请填写跟进内容", "err"); return false; }
+      await S.api(`/brands/${BID}/follow`, { method: "POST", body: {
+        content, next_plan: el.querySelector("#fPlan").value, creator: "运营",
+      }});
+      S.toast("跟进记录已提交", "ok");
+      load();
+    },
+  });
+}
+
+async function load() {
+  d = await S.api(`/brands/${BID}`);
+  render();
+}
+S.$("editBtn").onclick = () => editModal();
+S.$("followBtn").onclick = () => followModal();
+load().catch(e => S.$("root").innerHTML = `<div class="err-banner">${S.esc(e.message)}</div>`);
+</script>
+{% endblock %}

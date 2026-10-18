@@ -1,0 +1,118 @@
+{% extends "scrm/base.html" %}
+{% block title %}合作媒介{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>🤝 合作媒介</h2>
+    <div class="sub">询单标记「合作成功」自动新增媒介公司;可补充甲方主体、联系人与微信账户</div>
+  </div>
+  <div class="actions">
+    <button class="btn primary" id="addBtn">➕ 新增媒介</button>
+  </div>
+</div>
+
+<div class="filter-bar">
+  <input id="fQ" placeholder="公司 / 联系人 / 甲方主体">
+  <button class="btn primary" id="searchBtn">🔍 搜索</button>
+  <button class="btn" id="resetBtn">重置</button>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th style="width:170px;">媒介公司</th>
+          <th style="width:210px;">甲方主体信息</th>
+          <th style="width:100px;">联系人</th>
+          <th style="width:130px;">联系人微信</th>
+          <th style="width:76px;">关联商单</th>
+          <th style="width:90px;">来源</th>
+          <th style="width:120px;">更新时间</th>
+          <th style="width:130px;">操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"><tr><td colspan="8"><span class="spin"></span> 加载中…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let rows = [];
+
+function editModal(m) {
+  const isNew = !m;
+  m = m || {};
+  S.modal({
+    title: isNew ? "新增合作媒介" : `编辑媒介 · ${m.name}`,
+    body: `
+      <div class="form-row"><label>媒介公司</label><input id="mName" value="${S.esc(m.name || "")}"></div>
+      <div class="form-row"><label>甲方主体信息</label><input id="mParty" value="${S.esc(m.party_a || "")}" placeholder="公司注册主体全称"></div>
+      <div class="form-row"><label>联系人</label><input id="mContact" value="${S.esc(m.contact || "")}"></div>
+      <div class="form-row"><label>联系人微信</label><input id="mWechat" value="${S.esc(m.wechat || "")}"></div>
+      <div class="form-row"><label>备注</label><textarea id="mNote">${S.esc(m.note || "")}</textarea></div>`,
+    okText: "保存",
+    onOk: async (body) => {
+      const name = body.querySelector("#mName").value.trim();
+      if (!name) { S.toast("媒介公司名称必填", "err"); return false; }
+      const payload = { id: m.id, name,
+        party_a: body.querySelector("#mParty").value.trim(),
+        contact: body.querySelector("#mContact").value.trim(),
+        wechat: body.querySelector("#mWechat").value.trim(),
+        note: body.querySelector("#mNote").value.trim() };
+      await S.api("/media/save", { method: "POST", body: payload });
+      S.toast(isNew ? "已新增媒介" : "已保存", "ok");
+      load();
+    },
+  });
+}
+
+async function load() {
+  S.$("tbody").innerHTML = `<tr><td colspan="8" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  try {
+    const q = S.$("fQ").value.trim();
+    const d = await S.api("/media" + (q ? `?q=${encodeURIComponent(q)}` : ""));
+    rows = d.rows;
+    render();
+  } catch (e) {
+    S.$("tbody").innerHTML = `<tr><td colspan="8" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+  }
+}
+
+function render() {
+  if (!rows.length) {
+    S.$("tbody").innerHTML = `<tr><td colspan="8"><div class="empty"><div class="big">🤝</div>暂无合作媒介,询单标记「合作成功」后自动生成</div></td></tr>`;
+    return;
+  }
+  S.$("tbody").innerHTML = rows.map(r => `<tr>
+    <td><div class="clamp">${S.esc(r.name)}</div></td>
+    <td>${r.party_a ? `<div class="clamp">${S.esc(r.party_a)}</div>` : '<span class="muted">待补充</span>'}</td>
+    <td>${S.esc(r.contact || "—")}</td>
+    <td class="mono">${S.esc(r.wechat || "—")}</td>
+    <td class="mono">${r.deal_count}</td>
+    <td>${r.source === "auto" ? S.badge("询单联动", "primary") : S.badge("手动", "gray")}</td>
+    <td class="nowrap muted">${S.fmtTs(r.updated_ts)}</td>
+    <td>
+      <button class="btn sm" data-act="edit" data-id="${r.id}">✏️ 编辑</button>
+      <button class="btn sm danger" data-act="del" data-id="${r.id}">删除</button>
+    </td>
+  </tr>`).join("");
+  S.$$('button[data-act="edit"]').forEach(b => b.onclick = () =>
+    editModal(rows.find(r => r.id === Number(b.dataset.id))));
+  S.$$('button[data-act="del"]').forEach(b => b.onclick = () =>
+    S.confirm("确认删除该合作媒介?", async () => {
+      await S.api("/media/delete", { method: "POST", body: { id: Number(b.dataset.id) } });
+      S.toast("已删除", "ok"); load();
+    }));
+}
+
+S.$("addBtn").onclick = () => editModal(null);
+S.$("searchBtn").onclick = load;
+S.$("resetBtn").onclick = () => { S.$("fQ").value = ""; load(); };
+S.$("fQ").addEventListener("keydown", e => { if (e.key === "Enter") load(); });
+
+load();
+</script>
+{% endblock %}

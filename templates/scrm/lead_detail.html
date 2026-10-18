@@ -1,0 +1,165 @@
+{% extends "scrm/base.html" %}
+{% block title %}线索详情{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2><a href="/scrm/leads" style="font-size:15px;">← 返回线索列表</a></h2>
+    <div class="sub">线索 <b id="leadId">#{{ lid }}</b> · <span id="leadState"></span></div>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="/scrm/leads/{{ lid }}/workflow">🔄 打开跟进工作流</a>
+  </div>
+</div>
+
+<div id="root"><div class="loading"><span class="spin"></span> 加载中…</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const LID = {{ lid }};
+let d = null;
+
+function dateInput(ts) {
+  if (!ts) return "";
+  const dt = new Date(ts * 1000);
+  const p = x => String(x).padStart(2, "0");
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`;
+}
+
+function render() {
+  const l = d.lead;
+  const overdue = !["won", "lost"].includes(l.status) && l.due_ts && l.due_ts < Date.now() / 1000;
+  S.$("leadState").innerHTML = S.badge(l.status_label, overdue ? "red" : "primary", true) +
+    (overdue ? " " + S.badge("已超时", "red") : "");
+
+  S.$("root").innerHTML = `
+    <div class="grid cards-2">
+      <div>
+        <div class="card">
+          <div class="card-title">来源评论 <span class="more">${S.platformTag(l.platform)}</span></div>
+          <div class="comment-bubble">${S.esc(l.content || "(空评论)")}</div>
+          <div class="kvlist mt12">
+            <div class="k">评论人</div><div class="v">${S.esc(l.nickname || "匿名")}</div>
+            <div class="k">评论时间</div><div class="v">${S.fmtTs(l.ctime)}</div>
+            <div class="k">所属内容</div><div class="v">${S.esc(l.video_title || l.content_id || "-")}
+              ${l.video_url ? ` <a href="${S.esc(l.video_url)}" target="_blank">🔗</a>` : ""}</div>
+            <div class="k">UP主</div><div class="v">${S.esc(l.upname || "-")}</div>
+            <div class="k">原始链接</div><div class="v">
+              <a href="/scrm/comments/${l.src_table}/${l.src_pk}">查看评论详情 →</a></div>
+            <div class="k">AI 回复建议</div><div class="v">${l.reply ? S.esc(l.reply) : '<span class="muted">暂无</span>'}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">📝 跟进时间线 <span class="muted" style="font-weight:400;font-size:12px;">共 ${l.follows.length} 条记录</span></div>
+          ${l.follows.length ? `<div class="timeline">${l.follows.map(f => `
+            <div class="tl-item">
+              <div class="tl-time">${S.fmtTs(f.created_ts)} · <span class="tl-creator">${S.esc(f.creator)}</span></div>
+              <div class="tl-action">${S.esc(actionLabel(f.action))}</div>
+              <div class="tl-content">${S.esc(f.content)}</div>
+            </div>`).join("")}</div>` : S.empty("还没有跟进记录,首次联系后记得登记", "📝")}
+          <div class="form-row mt12">
+            <label>新增跟进记录</label>
+            <div class="flex" style="gap:8px;margin-bottom:8px;">
+              <select id="fAction" style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;">
+                <option value="call">📞 电话沟通</option>
+                <option value="message">💬 私信/微信</option>
+                <option value="visit">🤝 上门拜访</option>
+                <option value="note">📝 备注</option>
+              </select>
+            </div>
+            <textarea id="fContent" placeholder="记录本次跟进内容、客户反馈与下一步计划…"></textarea>
+          </div>
+          <button class="btn primary" id="addFollowBtn">➕ 提交跟进记录</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <div class="card-title">🎯 线索管理</div>
+          <div class="form-row"><label>当前状态</label>
+            <select id="fStatus">${d.statuses.map(s =>
+              `<option value="${s[0]}" ${s[0] === l.status ? "selected" : ""}>${s[1]}</option>`).join("")}</select></div>
+          <div class="form-grid">
+            <div class="form-row"><label>负责人</label>
+              <select id="fOwner"><option value="">待分配</option>
+                ${d.team.map(t => `<option ${t === l.owner ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+            <div class="form-row"><label>下次跟进截止</label>
+              <input type="date" id="fDue" value="${dateInput(l.due_ts)}"></div>
+          </div>
+          <div class="form-row"><label>意向描述</label>
+            <input id="fIntent" value="${S.esc(l.intent_desc || "")}" placeholder="如:想买洗烘一体,预算 3000 内"></div>
+          <div class="form-row"><label>内部备注</label>
+            <textarea id="fNote">${S.esc(l.note || "")}</textarea></div>
+          <button class="btn primary" id="saveBtn">💾 保存</button>
+          <div class="kvlist mt16">
+            <div class="k">创建时间</div><div class="v">${S.fmtTs(l.created_ts)}</div>
+            <div class="k">最后跟进</div><div class="v">${l.last_follow_ts ? S.ago(l.last_follow_ts) : "未跟进"}</div>
+            <div class="k">最后更新</div><div class="v">${S.ago(l.updated_ts)}</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">⚡ 快捷操作</div>
+          <div class="flex" style="gap:8px;flex-wrap:wrap;">
+            <button class="btn" data-quick="contacted">📞 标记已联系</button>
+            <button class="btn" data-quick="following">🔄 标记跟进中</button>
+            <button class="btn" data-quick="feedback">💬 记录客户反馈</button>
+            <button class="btn" style="color:var(--green);border-color:#bbf7d0;" data-quick="won">✅ 标记成交</button>
+            <button class="btn danger" data-quick="lost">❌ 标记流失</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  S.$("saveBtn").onclick = saveAll;
+  S.$$("[data-quick]").forEach(b => b.onclick = async () => {
+    await S.api(`/leads/${LID}/update`, { method: "POST", body: { status: b.dataset.quick } });
+    S.toast("状态已更新", "ok"); load();
+  });
+  S.$("addFollowBtn").onclick = async () => {
+    const content = S.$("fContent").value.trim();
+    if (!content) return S.toast("请填写跟进内容", "err");
+    await S.api(`/leads/${LID}/follow`, {
+      method: "POST",
+      body: { action: S.$("fAction").value, content, creator: "运营" },
+    });
+    // 若处于待联系,首次跟进自动推进
+    if (l.status === "new") {
+      await S.api(`/leads/${LID}/update`, { method: "POST", body: { status: "contacted" } });
+    }
+    S.toast("跟进记录已提交", "ok"); load();
+  };
+}
+
+function actionLabel(a) {
+  return { call: "📞 电话沟通", message: "💬 私信/微信", visit: "🤝 上门拜访",
+    note: "📝 备注", status: "🔄 状态变更" }[a] || a;
+}
+
+async function saveAll() {
+  const dueVal = S.$("fDue").value;
+  const due_ts = dueVal ? Math.floor(new Date(dueVal + "T23:59:59").getTime() / 1000) : null;
+  await S.api(`/leads/${LID}/update`, {
+    method: "POST",
+    body: {
+      status: S.$("fStatus").value,
+      owner: S.$("fOwner").value || null,
+      due_ts,
+      intent_desc: S.$("fIntent").value,
+      note: S.$("fNote").value,
+    },
+  });
+  S.toast("线索信息已保存", "ok");
+  load();
+}
+
+async function load() {
+  d = await S.api(`/leads/${LID}`);
+  render();
+}
+load().catch(e => {
+  S.$("root").innerHTML = `<div class="err-banner">${S.esc(e.message)}</div>`;
+});
+</script>
+{% endblock %}

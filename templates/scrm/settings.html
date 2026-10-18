@@ -1,0 +1,38 @@
+{% extends "scrm/base.html" %}
+{% block title %}设置管理{% endblock %}
+{% block content %}
+<div class="page-head"><div><h2>⚙️ 设置管理</h2><div class="sub">统一维护商务号、品类和平台 KPI 计算规则</div></div></div>
+<div class="tabs" id="tabs">
+  <button class="tab active" data-tab="wechat">商务号设置</button>
+  <button class="tab" data-tab="category">品类管理</button>
+  <button class="tab" data-tab="kpi">KPI管理</button>
+</div>
+<section class="tab-panel" data-panel="wechat">
+  <div class="page-head compact"><div><h3>商务号设置</h3><div class="sub">商务号与商务组员一对一匹配</div></div><button class="btn primary" id="addWechat">➕ 新增映射</button></div>
+  <div class="card" style="padding:0"><div class="table-wrap"><table class="data"><thead><tr><th>商务号 / 微信账户</th><th>商务组员</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="wechatBody"><tr><td colspan="5" class="loading">加载中…</td></tr></tbody></table></div></div>
+</section>
+<section class="tab-panel" data-panel="category" style="display:none">
+  <div class="page-head compact"><div><h3>品类管理</h3><div class="sub">维护商单可使用的产品品类</div></div><button class="btn primary" id="addCategory">➕ 新增品类</button></div>
+  <div class="card" style="padding:0"><div class="table-wrap"><table class="data"><thead><tr><th>品类名称</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="categoryBody"><tr><td colspan="4" class="loading">加载中…</td></tr></tbody></table></div></div>
+</section>
+<section class="tab-panel" data-panel="kpi" style="display:none">
+  <div class="page-head compact"><div><h3>KPI管理</h3><div class="sub">配置各平台 CPME、CPE 比例和原创基础值</div></div><button class="btn primary" id="addKpi">➕ 新增配置</button></div>
+  <div class="card" style="padding:0"><div class="table-wrap"><table class="data"><thead><tr><th>平台</th><th>CPME比例</th><th>CPE比例</th><th>原创基础值</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="kpiBody"><tr><td colspan="6" class="loading">加载中…</td></tr></tbody></table></div></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+const rows = {wechat:[], category:[], kpi:[]};
+const esc = S.esc;
+function switchTab(name){document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b.dataset.tab===name));document.querySelectorAll(".tab-panel").forEach(p=>p.style.display=p.dataset.panel===name?"":"none");}
+document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+async function loadWechat(){const d=await S.api("/business-wechat");rows.wechat=d.rows;S.$("wechatBody").innerHTML=rows.wechat.map(r=>`<tr><td class="mono">${esc(r.wechat)}</td><td>${esc(r.member)}</td><td>${S.badge(r.status==="active"?"启用":"停用",r.status==="active"?"green":"gray")}</td><td>${S.fmtTs(r.updated_ts)}</td><td><button class="btn sm" data-wechat="${r.id}">编辑</button></td></tr>`).join("")||'<tr><td colspan="5" class="muted">暂无映射</td></tr>';document.querySelectorAll("[data-wechat]").forEach(b=>b.onclick=()=>wechatModal(rows.wechat.find(r=>r.id==b.dataset.wechat)));}
+function wechatModal(row={}){S.modal({title:row.id?"编辑商务号映射":"新增商务号映射",body:`<div class="form-row"><label>商务号 / 微信账户</label><input id="mWechat" value="${esc(row.wechat||"")}"></div><div class="form-row"><label>商务组员</label><input id="mMember" value="${esc(row.member||"")}"></div>`,okText:"保存",onOk:async b=>{const wechat=b.querySelector("#mWechat").value.trim(),member=b.querySelector("#mMember").value.trim();if(!wechat||!member)throw Error("微信号和商务组员必填");await S.api("/business-wechat/save",{method:"POST",body:{id:row.id,wechat,member}});S.toast("已保存","ok");loadWechat();}})}
+async function loadCategory(){const d=await S.api("/categories");rows.category=d.rows;S.$("categoryBody").innerHTML=rows.category.map(r=>`<tr><td>${esc(r.name)}</td><td>${S.badge(r.status==="active"?"启用":"停用",r.status==="active"?"green":"gray")}</td><td>${S.fmtTs(r.updated_ts)}</td><td><button class="btn sm" data-category="${r.id}">编辑</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">暂无品类</td></tr>';document.querySelectorAll("[data-category]").forEach(b=>b.onclick=()=>categoryModal(rows.category.find(r=>r.id==b.dataset.category)));}
+function categoryModal(row={}){S.modal({title:row.id?"编辑品类":"新增品类",body:`<div class="form-row"><label>品类名称</label><input id="mCategory" value="${esc(row.name||"")}"></div>`,okText:"保存",onOk:async b=>{const name=b.querySelector("#mCategory").value.trim();if(!name)throw Error("品类名称必填");await S.api("/categories/save",{method:"POST",body:{id:row.id,name}});S.toast("已保存","ok");loadCategory();}})}
+async function loadKpi(){const d=await S.api("/kpi-configs");rows.kpi=d.rows;S.$("kpiBody").innerHTML=rows.kpi.map(r=>`<tr><td>${esc(r.platform)}</td><td class="mono">${esc(r.cpme_ratio)}</td><td class="mono">${esc(r.cpe_ratio)}</td><td class="mono">${esc(r.original_base_value||0)}</td><td>${S.fmtTs(r.updated_ts)}</td><td><button class="btn sm" data-kpi="${r.id}">编辑</button></td></tr>`).join("")||'<tr><td colspan="6" class="muted">暂无KPI配置</td></tr>';document.querySelectorAll("[data-kpi]").forEach(b=>b.onclick=()=>kpiModal(rows.kpi.find(r=>r.id==b.dataset.kpi),d.platforms));}
+function kpiModal(row={},platforms=[]){const opts=(platforms||[]).map(p=>`<option ${row.platform===p?"selected":""}>${esc(p)}</option>`).join("");S.modal({title:row.id?"编辑KPI配置":"新增KPI配置",body:`<div class="form-row"><label>平台</label><select id="mPlatform">${opts}</select></div><div class="form-row"><label>CPME比例</label><input id="mCpme" type="number" min="0.0001" step="0.01" value="${esc(row.cpme_ratio||"")}"></div><div class="form-row"><label>CPE比例</label><input id="mCpe" type="number" min="0.0001" step="0.01" value="${esc(row.cpe_ratio||"")}"></div><div class="form-row"><label>原创基础值</label><input id="mOriginal" type="number" min="0" step="1" value="${esc(row.original_base_value||0)}"></div>`,okText:"保存",onOk:async b=>{const cpme=b.querySelector("#mCpme").value,cpe=b.querySelector("#mCpe").value,original=b.querySelector("#mOriginal").value;if(!cpme||!cpe||Number(cpme)<=0||Number(cpe)<=0||Number(original)<0)throw Error("请输入有效的比例和原创基础值");await S.api("/kpi-configs/save",{method:"POST",body:{id:row.id,platform:b.querySelector("#mPlatform").value,cpme_ratio:cpme,cpe_ratio:cpe,original_base_value:original}});S.toast("已保存","ok");loadKpi();}})}
+S.$("addWechat").onclick=()=>wechatModal();S.$("addCategory").onclick=()=>categoryModal();S.$("addKpi").onclick=async()=>{const d=await S.api("/kpi-configs");kpiModal({},d.platforms)};
+loadWechat();loadCategory();loadKpi();
+</script>
+{% endblock %}

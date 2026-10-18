@@ -1,0 +1,84 @@
+{% extends "scrm/base.html" %}
+{% block title %}询单转化漏斗{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>🔻 询单转化漏斗</h2>
+    <div class="sub">商务询单全链路转化:询单 → 有意向 → 合作成功(数据来源:飞书询单表)</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/scrm/inquiries">📨 商务询单</a>
+  </div>
+</div>
+
+<div class="grid cards-2">
+  <div class="card">
+    <div class="card-title">🔻 询单转化漏斗</div>
+    <div id="funnelChart" class="mt12"></div>
+    <div class="muted mt12" style="font-size:12.5px;">
+      转化率 = 当前阶段询单数 / 询单总数;每阶段右侧另显示对上一阶段的环比转化。
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">📊 各状态询单分布</div>
+    <div id="stageChart"></div>
+  </div>
+</div>
+
+<div class="card mt16">
+  <div class="card-title">👥 商务组员转化表现</div>
+  <div class="table-wrap">
+    <table class="data">
+      <thead><tr>
+        <th>商务组员</th>
+        <th class="right">询单数</th>
+        <th class="right">有意向 + 合作成功</th>
+        <th class="right">合作成功</th>
+        <th class="right">合作成功率</th>
+        <th style="width:220px;">转化进度</th>
+      </tr></thead>
+      <tbody id="ownerBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mt16">
+  <div class="card-title">📋 各状态询单明细</div>
+  <div id="stageLists"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function load() {
+  const d = await S.api("/brands/funnel");
+  S.funnel(S.$("funnelChart"), d.funnel);
+  S.donut(S.$("stageChart"),
+    d.stages.filter(s => s.count > 0).map(s => ({ name: s.label, value: s.count, color: s.color })),
+    "询单数");
+
+  S.$("ownerBody").innerHTML = d.by_owner.length ? d.by_owner.map(o => {
+    const rate = o.total ? Math.round(o.won * 100 / o.total) : 0;
+    return `<tr>
+      <td><b>${S.esc(o.sales)}</b></td>
+      <td class="right">${Number(o.total)}</td>
+      <td class="right" style="color:var(--amber);">${Number(o.intent || 0)}</td>
+      <td class="right" style="color:var(--green);">${Number(o.won || 0)}</td>
+      <td class="right"><b>${rate}%</b></td>
+      <td><div style="background:#eef0f5;border-radius:6px;height:8px;">
+        <div style="width:${rate}%;background:var(--green);height:100%;border-radius:6px;"></div></div></td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="6" class="muted" style="text-align:center;padding:20px;">暂无商务组员数据</td></tr>`;
+
+  S.$("stageLists").innerHTML = d.stages.map(st => `
+    <div style="margin-bottom:14px;">
+      <div class="flex" style="margin-bottom:8px;align-items:center;">
+        <span class="badge dot" style="background:${st.color};color:#fff;">${S.esc(st.label)}</span>
+        <b style="margin-left:6px;">${st.count}</b> 条询单
+        <a class="btn sm" style="margin-left:auto;" href="/scrm/inquiries?status=${encodeURIComponent(st.key)}">查看全部 →</a>
+      </div>
+    </div>`).join("");
+}
+load().catch(e => S.toast(e.message, "err"));
+</script>
+{% endblock %}

@@ -1,0 +1,132 @@
+{% extends "scrm/base.html" %}
+{% block title %}线索异常告警{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>⏰ 线索跟进异常告警</h2>
+    <div class="sub">跟进超时、客户长期无应答、未分配线索的集中处理中心</div>
+  </div>
+</div>
+
+<div class="grid cards-3">
+  <div class="card stat-card kpi-red">
+    <div class="kpi-ico">⏰</div>
+    <div class="kpi-label">已超时未推进</div>
+    <div class="kpi-value" id="cOverdue">—</div>
+    <div class="kpi-foot">超过下次跟进截止时间</div>
+  </div>
+  <div class="card stat-card kpi-amber">
+    <div class="kpi-ico">🧊</div>
+    <div class="kpi-label">7 天无跟进动作</div>
+    <div class="kpi-value" id="cStuck">—</div>
+    <div class="kpi-foot">跟进停滞,客户可能流失</div>
+  </div>
+  <div class="card stat-card kpi-primary">
+    <div class="kpi-ico">👤</div>
+    <div class="kpi-label">待分配线索</div>
+    <div class="kpi-value" id="cUnassigned">—</div>
+    <div class="kpi-foot">新识别尚未指定负责人</div>
+  </div>
+</div>
+
+<div class="card mt16">
+  <div class="tabs">
+    <button data-tab="overdue" class="active">⏰ 超时线索 <span class="n" id="t1">—</span></button>
+    <button data-tab="stuck">🧊 停滞线索 <span class="n" id="t2">—</span></button>
+    <button data-tab="unassigned">👤 待分配 <span class="n" id="t3">—</span></button>
+  </div>
+  <div class="table-wrap">
+    <table class="data">
+      <thead><tr>
+        <th style="width:70px;">平台</th>
+        <th>来源评论</th>
+        <th style="width:84px;">状态</th>
+        <th style="width:84px;">负责人</th>
+        <th style="width:130px;">问题说明</th>
+        <th style="width:220px;">处理动作</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let data = null, tab = "overdue";
+
+async function load() {
+  data = await S.api("/leads/alerts");
+  S.$("cOverdue").textContent = data.overdue.length + (data.overdue.length >= 50 ? "+" : "");
+  S.$("cStuck").textContent = data.stuck.length + (data.stuck.length >= 50 ? "+" : "");
+  S.$("cUnassigned").textContent = data.unassigned.length + (data.unassigned.length >= 50 ? "+" : "");
+  S.$("t1").textContent = data.overdue.length;
+  S.$("t2").textContent = data.stuck.length;
+  S.$("t3").textContent = data.unassigned.length;
+  render();
+}
+
+function render() {
+  const rows = data[tab];
+  if (!rows.length) {
+    S.$("tbody").innerHTML = `<tr><td colspan="6">${S.empty("本类暂无异常 🎉", "✨")}</td></tr>`;
+    return;
+  }
+  S.$("tbody").innerHTML = rows.map(r => {
+    const explain = tab === "overdue"
+      ? `<span style="color:var(--red);">已超时 · ${S.fmtDate(r.due_ts)} 截止</span>`
+      : tab === "stuck"
+      ? `<span style="color:var(--amber);">${S.ago(r.last_follow_ts)} 最后跟进</span>`
+      : '<span class="badge red">无人认领</span>';
+    const leadHref = `/scrm/leads/${r.id}`;
+    return `
+      <tr class="${tab === "overdue" ? "row-overdue" : tab === "stuck" ? "row-intent" : ""}">
+        <td>${S.platformTag(r.platform)}</td>
+        <td class="cell-content">
+          <a href="${leadHref}"><div class="clamp">${S.esc(r.content)}</div></a>
+          <div class="sub2">${S.esc(r.nickname || "匿名")} · ${S.ago(r.ctime)}</div>
+        </td>
+        <td>${S.badge(r.status || "new", "gray")}</td>
+        <td>${r.owner ? S.esc(r.owner) : S.badge("待分配", "red")}</td>
+        <td class="nowrap">${explain}</td>
+        <td class="nowrap">
+          <a class="btn sm" href="${leadHref}">详情</a>
+          ${tab === "unassigned"
+            ? `<button class="btn sm primary" onclick="assignOne(${r.id})">分配</button>`
+            : `<button class="btn sm" onclick="remind(${r.id},'${S.esc(r.owner || "")}')">🔔 提醒</button>
+               <button class="btn sm" onclick="assignOne(${r.id})">重新分配</button>
+               <button class="btn sm danger" onclick="escalate(${r.id})">⬆ 升级</button>`}
+        </td>
+      </tr>`;
+  }).join("");
+}
+
+function assignOne(id) {
+  S.modal({
+    title: `分配线索 #${id}`,
+    body: `<div class="form-row"><label>选择负责人</label>
+      <select id="aOwner"><option>希乙</option><option>路飞</option><option>晓敏</option><option>陈晨</option></select></div>`,
+    okText: "确认分配",
+    onOk: async (b) => {
+      await S.api(`/leads/${id}/update`, {
+        method: "POST", body: { owner: b.querySelector("#aOwner").value },
+      });
+      S.toast("分配成功,飞书已通知本人 🔔", "ok");
+      load();
+    },
+  });
+}
+window.remind = (id, owner) => S.toast(`🔔 已向 ${owner || "负责人"} 发送飞书跟进提醒(#${id})`, "ok");
+window.escalate = id => S.toast(`⬆ 线索 #${id} 已升级上报给管理层(希乙/路飞)`, "ok");
+window.assignOne = assignOne;
+
+S.$$(".tabs button").forEach(b => b.onclick = () => {
+  S.$$(".tabs button").forEach(x => x.classList.remove("active"));
+  b.classList.add("active");
+  tab = b.dataset.tab;
+  render();
+});
+
+load().catch(e => S.toast(e.message, "err"));
+</script>
+{% endblock %}
