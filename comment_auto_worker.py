@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """Process queued comment auto-operation tasks.
 
-First closed loop: Douyin reply tasks through the task's BitBrowser window.
+Douyin replies use the signed direct API while existing BitBrowser account
+bindings remain available for login and Cookie synchronisation.
 """
 import argparse
 import asyncio
 import json
 import os
 import re
-import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -17,192 +18,67 @@ import requests
 from db import get_conn
 
 BASE_DIR = Path(__file__).resolve().parent
-REPO_DIR = BASE_DIR / "douyin-creator-tools"
-INPUT_PATH = REPO_DIR / "comments-output" / "auto-task-reply-input.json"
-OUTPUT_PATH = REPO_DIR / "comments-output" / "auto-task-reply-result.json"
 BIT_API = os.getenv("BITBROWSER_API", "http://127.0.0.1:54345")
-HEADLESS_WINDOW_FILE = BASE_DIR / "bitbrowser_headless_windows.json"
-HEADLESS_COMMENT_URL = "https://creator.douyin.com/creator-micro/interactive/comment"
+
+# The supplied ``douyin_commenter`` bundle is kept next to this application.
+# It signs and sends the Web comment API directly, so a reply does not need a
+# BitBrowser clone (or any additional BitBrowser window).
+DOUYIN_COMMENTER_ROOT = BASE_DIR / "douyin_commenter_reference" / "douyin_commenter"
+DEFAULT_DOUYIN_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 
-def open_bit_window(bit_window):
-    window_id = resolve_bit_window_id(bit_window)
-    last_resp = None
-    for attempt in range(1, 13):
-        resp = requests.post(f"{BIT_API}/browser/open", json={"id": window_id}, timeout=60).json()
-        last_resp = resp
-        data = resp.get("data") or {}
-        ws = data.get("ws")
-        http = data.get("http")
-        # BitBrowser 同时返回 http 和 ws 调试地址。优先使用原始 ws，
-        # 避免 Playwright 先通过 HTTP 再二次解析 websocket 时卡在启动阶段。
-        endpoint = ws or (f"http://{http}" if http else "")
-        if endpoint:
-            if attempt > 1:
-                print(f"BitBrowser 第 {attempt} 次打开成功")
-            return ws or endpoint, (f"http://{http}" if http else ""), window_id
-        msg = str(resp.get("msg") or resp)
-        if "正在关闭" in msg or "稍后" in msg or "启动" in msg:
-            time.sleep(5)
-            continue
-        break
-    raise RuntimeError(f"BitBrowser 未返回 ws: {last_resp}")
+def _explicitly_missing(task):
+    """Honour deletion flags emitted by collectors without guessing from text."""
+    return any(task.get(key) in (1, True, '1', 'true', 'deleted') for key in
+               ('deleted', 'is_deleted', 'comment_deleted', 'unavailable'))
 
 
-def resolve_bit_window_id(bit_window):
-    value = str(bit_window).strip()
-    if not value.isdigit():
-        return value
-    page = 0
-    while True:
-        resp = requests.post(
-            f"{BIT_API}/browser/list", json={"page": page, "pageSize": 100}, timeout=30
-        ).json()
-        data = resp.get("data") or {}
-        rows = data.get("list") or []
-        for row in rows:
-            if str(row.get("seq")) == value:
-                return row["id"]
-        total = data.get("totalNum") or len(rows)
-        if (page + 1) * 100 >= total or not rows:
-            break
-        page += 1
-    raise RuntimeError(f"未找到 BitBrowser 序号 {value} 对应的窗口")
+def verify_comment_exists(task):
+    """Lightweight pre-send check supplied by each platform adapter.
 
-
-def close_bit_window(bit_window):
+    ``False`` means the target is known gone; ``None`` means the adapter cannot
+    safely decide and the normal send path must obtain its own page/API result.
+    We intentionally never infer deletion from a transient network error.
+    """
+    if _explicitly_missing(task):
+        return False
+    if task.get('platform') != 'B站':
+        return None
     try:
-        requests.post(f"{BIT_API}/browser/close", json={"id": str(bit_window)}, timeout=30)
+        cookie = get_bilibili_cookie(task.get('video_account') or task.get('account_nickname')).get('cookies') or ''
+        oid = str(task.get('video_id') or task.get('content_id') or '').strip()
+        rpid = str(task.get('comment_id') or '').strip()
+        if not oid or not rpid:
+            return None
+        response = requests.get('https://api.bilibili.com/x/v2/reply/reply', params={
+            'type': '1', 'oid': oid, 'root': rpid,
+        }, headers=bilibili_headers(cookie, task.get('bvid')), timeout=15)
+        payload = response.json()
+        # A successful empty root response is a reliable deletion/not-visible signal.
+        if payload.get('code') == 0:
+            root = (payload.get('data') or {}).get('root') or {}
+            return str(root.get('rpid') or '') == rpid
     except Exception:
         pass
+    return None
 
 
-def _bit_json(path, payload, timeout=30):
-    resp = requests.post(f"{BIT_API}{path}", json=payload, timeout=timeout)
-    data = resp.json()
-    if not data.get("success", True):
-        raise RuntimeError(f"BitBrowser {path} 失败: {data.get('msg') or data}")
-    return data
+def verify_reply(task):
+    """Adapter reconciliation hook used by the delayed uncertain-task scanner.
 
-
-def _load_headless_window_map():
-    try:
-        value = json.loads(HEADLESS_WINDOW_FILE.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-
-def _save_headless_window_map(value):
-    HEADLESS_WINDOW_FILE.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _clone_bit_window(source_id, account_name):
-    """Create a private BitBrowser profile carrying the source profile's cookies.
-
-    The original profile is never opened or closed by this helper.  The clone is
-    opened with BitBrowser's headless flag and a single explicit comment page.
+    Existing adapters do not expose a reliable idempotent lookup for every
+    platform yet.  Returning ``unknown`` is intentional: it keeps the task in
+    the review queue rather than risking a duplicate reply.
     """
-    source = (_bit_json("/browser/detail", {"id": source_id}).get("data") or {})
-    if not source:
-        raise RuntimeError(f"BitBrowser 找不到源窗口 {source_id}")
-    fingerprint = dict(source.get("browserFingerPrint") or {})
-    for key in ("id", "seq", "browserId"):
-        fingerprint.pop(key, None)
-    clean = {
-        "name": f"自动回复无头-{account_name or source.get('seq') or source_id}",
-        "remark": f"自动回复专用，不影响原窗口{source.get('seq') or source_id}",
-        "platform": "https://creator.douyin.com",
-        "url": "",
-        "cookie": source.get("cookie") or "",
-        "browserFingerPrint": fingerprint,
-        "workbench": "disable",
-        "syncTabs": False,
-        "syncCookies": False,
-        "syncIndexedDb": False,
-        "syncBookmarks": False,
-        "syncHistory": False,
-        "syncSessions": False,
-        "syncLocalStorage": False,
-    }
-    for key in ("proxyMethod", "proxyType", "host", "port", "proxyUserName",
-                "proxyPassword", "enableSocks5Udp", "ipCheckService", "isIpv6",
-                "country", "province", "city"):
-        if key in source and source.get(key) not in (None, ""):
-            clean[key] = source[key]
-    created = _bit_json("/browser/update", clean, timeout=60)
-    data = created.get("data") or {}
-    clone_id = data.get("id") or data.get("browserId")
-    if not clone_id:
-        raise RuntimeError(f"BitBrowser 创建无头窗口未返回id: {created}")
-    return str(clone_id)
-
-
-def _refresh_headless_cookie(clone_id, cookie_header):
-    if not cookie_header:
-        return
-    try:
-        detail = _bit_json("/browser/detail", {"id": clone_id}, timeout=20).get("data") or {}
-        items = json.loads(detail.get("cookie") or "[]")
-        by_name = {}
-        for item in items:
-            if item.get("name"):
-                by_name.setdefault(item["name"], []).append(item)
-        for part in str(cookie_header).split(";"):
-            if "=" not in part:
-                continue
-            name, value = part.strip().split("=", 1)
-            name = name.strip()
-            if not name:
-                continue
-            matches = by_name.get(name) or []
-            if matches:
-                for item in matches:
-                    item["value"] = value.strip()
-            else:
-                items.append({"name": name, "value": value.strip(), "domain": ".douyin.com", "path": "/"})
-        _bit_json("/browser/update", {"id": clone_id, "cookie": json.dumps(items, ensure_ascii=False)}, timeout=60)
-    except Exception as exc:
-        print(f"BitBrowser 无头窗口 Cookie 同步警告: {exc}")
-
-
-def open_headless_window(bit_window, account_name="", cookie_header=""):
-    """Open/reuse a dedicated headless clone, leaving the source window intact."""
-    source_id = resolve_bit_window_id(bit_window)
-    key = f"{source_id}:{normalize_account_name(account_name) or 'default'}"
-    mapping = _load_headless_window_map()
-    clone_id = str(mapping.get(key) or "")
-    if clone_id:
-        try:
-            _bit_json("/browser/detail", {"id": clone_id}, timeout=15)
-        except Exception:
-            clone_id = ""
-    if not clone_id:
-        clone_id = _clone_bit_window(source_id, account_name)
-        mapping[key] = clone_id
-        _save_headless_window_map(mapping)
-    _refresh_headless_cookie(clone_id, cookie_header)
-
-    last_resp = None
-    for attempt in range(1, 13):
-        resp = _bit_json("/browser/open", {
-            "id": clone_id,
-            "args": ["--headless"],
-            "queue": True,
-            "ignoreDefaultUrls": True,
-            "newPageUrl": HEADLESS_COMMENT_URL,
-        }, timeout=120)
-        last_resp = resp
-        data = resp.get("data") or {}
-        ws, http = data.get("ws"), data.get("http")
-        if ws or http:
-            return ws or f"http://{http}", (f"http://{http}" if http else ""), clone_id
-        msg = str(resp.get("msg") or resp)
-        if any(word in msg for word in ("正在关闭", "稍后", "启动", "打开")):
-            time.sleep(5)
-            continue
-        break
-    raise RuntimeError(f"BitBrowser 无头窗口未返回调试地址: {last_resp}")
+    if _explicitly_missing(task):
+        return 'missing'
+    # B站's reply endpoint confirms that the source still exists, but cannot
+    # identify our child reply without a persisted reply ID on old tasks.
+    exists = verify_comment_exists(task)
+    return 'missing' if exists is False else 'unknown'
 
 
 def fetch_douyin_tasks(limit):
@@ -328,7 +204,7 @@ def set_task_status(task_id, status, error=None):
                     UPDATE comment_auto_task SET status='running', started_ts=%s, error_message=NULL
                     WHERE id=%s
                 """, (int(time.time()), task_id))
-            elif status in ("success", "failed"):
+            elif status in ("success", "failed", "uncertain"):
                 cur.execute("""
                     UPDATE comment_auto_task SET status=%s, finished_ts=%s, error_message=%s
                     WHERE id=%s
@@ -386,87 +262,77 @@ def get_douyin_cookie(account_name="", bit_window=""):
     return cookie_rows[0]
 
 
-def sync_douyin_cookie_to_platform(account_name, bit_window, cookie):
-    if not cookie:
-        return 0
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            n = cur.execute("""
-                UPDATE `平台运营账号`
-                SET `cookie`=%s
-                WHERE `平台`='抖音' AND (`昵称`=%s OR `Bit窗口`=%s)
-            """, (cookie, str(account_name or "").replace("～", "").replace("~", ""), str(bit_window or "")))
-        conn.commit()
-    return n
+def _load_douyin_commenter():
+    """Load the supplied direct-comment client without requiring BitBrowser.
 
-def build_input(tasks, cookie_header, cdp_endpoint=""):
-    plans = []
-    for task in tasks:
-        if not task.get("title"):
-            raise RuntimeError(f"任务 {task['id']} 缺少作品标题，无法定位作品")
-        plans.append({
-            "id": str(task["comment_id"]),
-            "awemeId": str(task["aweme_id"]),
-            "workTitle": task["title"],
-            "commentText": task.get("content") or "",
-            "replyMessage": task.get("reply_suggestion") or "",
-            "action": task.get("action_type") or "reply",
-        })
-    INPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "account": {"bit_window": tasks[0]["bit_window"], "account_name": tasks[0].get("account_nickname")},
-        "cookieHeader": cookie_header,
-        "plans": plans,
+    The bundle is deliberately imported only when a Douyin task runs, keeping
+    the rest of the SCRM service usable if its optional HTTP dependency has not
+    been installed yet.
+    """
+    root = str(DOUYIN_COMMENTER_ROOT)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        from douyin_commenter import DouyinClient
+        return DouyinClient
+    except ImportError as exc:
+        raise RuntimeError(
+            "抖音直连回复组件不可用，请安装 curl_cffi 后重试：" + str(exc)
+        ) from exc
+
+
+async def _post_douyin_reply_direct(task, cookie_header):
+    """Send exactly one reply through the supplied signed Web API client.
+
+    A write result that cannot be confirmed is intentionally *not* retried.
+    The caller maps it to ``uncertain`` so an operator can check the comment
+    thread before deciding whether to retry.
+    """
+    message = str(task.get("reply_suggestion") or "").strip()
+    aweme_id = str(task.get("aweme_id") or task.get("content_id") or "").strip()
+    comment_id = str(task.get("comment_id") or "").strip()
+    if not message or message.startswith("⚠ 分析失败"):
+        return {"replyPlanId": comment_id, "status": "failed", "error": "缺少可发送的推荐回复"}
+    if not aweme_id or not comment_id:
+        return {"replyPlanId": comment_id, "status": "failed", "error": "缺少作品 ID 或目标评论 ID"}
+    client_type = _load_douyin_commenter()
+    client = client_type(cookie_header, DEFAULT_DOUYIN_UA, timeout=25)
+    async with client.session_scope():
+        ok, sent_comment_id, error = await client.post_comment(
+            aweme_id, message, reply_comment_id=comment_id
+        )
+    if ok:
+        return {
+            "replyPlanId": comment_id,
+            "status": "replied",
+            "sentCommentId": sent_comment_id,
+        }
+    return {
+        "replyPlanId": comment_id,
+        "status": "uncertain" if str(error).startswith("write_uncertain:") else "failed",
+        "error": error or "抖音未返回可确认的发表结果",
     }
-    if cdp_endpoint:
-        payload["cdpWebSocket"] = cdp_endpoint
-    INPUT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def run_douyin_reply(tasks, dry_run=False):
+    """Reply through the signed API; never create or open a BitBrowser window.
+
+    Account-to-BitBrowser mapping remains the source of the stored Cookie, so
+    existing accounts continue to work.  BitBrowser is not contacted during a
+    send; it is only still used separately for login/Cookie synchronisation.
+    """
+    if not tasks:
+        return []
     cookie_row = get_douyin_cookie(tasks[0].get("account_nickname"), tasks[0].get("bit_window"))
     cookie_header = cookie_row.get("cookies") or ""
     if "sessionid" not in cookie_header:
         raise RuntimeError("抖音cookie缺少sessionid，请重新同步cookie")
-    sync_douyin_cookie_to_platform(tasks[0].get("account_nickname"), tasks[0].get("bit_window"), cookie_header)
-    # 抖音复用比特浏览器的登录态，但使用独立的无头克隆，避免清理/卡住原窗口。
-    cdp_endpoint, cdp_http, headless_window_id = open_headless_window(
-        tasks[0].get("bit_window"), tasks[0].get("account_nickname") or "", cookie_header
-    )
-    try:
-        build_input(tasks, cookie_header, cdp_endpoint)
-        payload = json.loads(INPUT_PATH.read_text(encoding="utf-8"))
-        payload["cdpHttp"] = cdp_http
-        payload["headlessBitWindow"] = headless_window_id
-        INPUT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        cmd = ["node", "db-auto-reply.mjs", str(INPUT_PATH), "--use-cdp", "--out", str(OUTPUT_PATH)]
-        if dry_run:
-            cmd.append("--dry-run")
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=REPO_DIR,
-                timeout=300,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("抖音自动回复超过300秒未返回，已停止等待")
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "").strip()
-            if len(detail) > 1800:
-                detail = detail[-1800:]
-            raise RuntimeError(
-                f"db-auto-reply.mjs 退出码 {result.returncode}"
-                + (f"：{detail}" if detail else "")
-            )
-        output = json.loads(OUTPUT_PATH.read_text(encoding="utf-8"))
-        return output.get("results") or []
-    finally:
-        # 仅关闭本次创建/复用的无头克隆；原窗口和它的页面保持不动。
-        close_bit_window(headless_window_id)
+    if dry_run:
+        return [
+            {"replyPlanId": str(task.get("comment_id") or ""), "status": "dry_run"}
+            for task in tasks
+        ]
+    return [asyncio.run(_post_douyin_reply_direct(task, cookie_header)) for task in tasks]
 
 
 
@@ -593,8 +459,7 @@ def process(limit, dry_run=False):
             success_ids = {
                 str(r.get("replyPlanId")) for r in results
                 if r.get("status") in (
-                    "replied", "deleted", "dry_run_delete",
-                    "skipped_already_replied", "skipped_reply_ledger", "sent_unconfirmed"
+                    "replied", "dry_run"
                 )
             }
             for task in group:
@@ -606,8 +471,9 @@ def process(limit, dry_run=False):
                 else:
                     match = next((r for r in results if str(r.get("replyPlanId")) == str(task["comment_id"])), {})
                     error = match.get("error") or match.get("status") or "未返回成功结果"
-                    set_task_status(task["id"], "failed", error)
-                    print(f"  failed task={task['id']} {error}")
+                    status = "uncertain" if match.get("status") == "uncertain" else "failed"
+                    set_task_status(task["id"], status, error)
+                    print(f"  {status} task={task['id']} {error}")
         except Exception as exc:
             for task in group:
                 set_task_status(task["id"], "failed", str(exc))

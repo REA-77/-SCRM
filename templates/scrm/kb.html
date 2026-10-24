@@ -1,0 +1,41 @@
+{% extends "scrm/base.html" %}
+{% block title %}知识库{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>🧠 知识库</h2>
+    <div class="sub">L0 策略 · L1 事实 · L1.5 类目痛点与参数证据 · L2 知识 · L3 语料 · L4 运营</div>
+  </div>
+  <div class="actions"><a class="btn primary" href="/scrm/kb/ingest">📥 文档同步入库</a></div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="data">
+      <thead><tr>
+        <th>层</th><th>表名</th><th>说明</th>
+        <th class="right">行数</th><th style="width:120px;">操作</th>
+      </tr></thead>
+      <tbody id="tbody">
+        <tr><td colspan="5" class="loading"><span class="spin"></span> 加载中…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(async () => {
+  const d = await S.api("/kb/overview");
+  S.$("tbody").innerHTML = d.tables.map(t => `
+    <tr>
+      <td class="nowrap">${S.badge(t.layer, "primary")}</td>
+      <td class="mono">${t.table}</td>
+      <td class="muted">${S.esc(t.title)}${t.readonly ? ' ' + S.badge("只读", "gray") : ""}</td>
+      <td class="right"><b>${Number(t.rows).toLocaleString()}</b></td>
+      <td class="nowrap"><a class="btn sm primary" href="/scrm/kb/${t.table}">管理</a>${t.readonly ? "" : ` <a class="btn sm" href="/scrm/kb/ingest?table=${t.table}">摄取</a>`}</td>
+    </tr>`).join("");
+})();
+</script>
+{% endblock %}

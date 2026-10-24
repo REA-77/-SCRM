@@ -13,6 +13,8 @@
 
 <div class="filter-bar">
   <input id="fQ" placeholder="公司 / 联系人 / 甲方主体">
+  <select id="fBrand"><option value="">全部品牌属性</option><option value="品牌方">品牌方</option><option value="非品牌方">非品牌方</option></select>
+  <select id="fFrequency"><option value="">全部合作频率</option></select>
   <button class="btn primary" id="searchBtn">🔍 搜索</button>
   <button class="btn" id="resetBtn">重置</button>
 </div>
@@ -23,6 +25,9 @@
       <thead>
         <tr>
           <th style="width:170px;">媒介公司</th>
+          <th style="width:90px;">是否品牌方</th>
+          <th style="width:120px;">媒介合作频率</th>
+          <th style="width:80px;">合作次数</th>
           <th style="width:210px;">甲方主体信息</th>
           <th style="width:100px;">联系人</th>
           <th style="width:130px;">联系人微信</th>
@@ -32,7 +37,7 @@
           <th style="width:130px;">操作</th>
         </tr>
       </thead>
-      <tbody id="tbody"><tr><td colspan="8"><span class="spin"></span> 加载中…</td></tr></tbody>
+      <tbody id="tbody"><tr><td colspan="11"><span class="spin"></span> 加载中…</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -49,6 +54,9 @@ function editModal(m) {
     title: isNew ? "新增合作媒介" : `编辑媒介 · ${m.name}`,
     body: `
       <div class="form-row"><label>媒介公司</label><input id="mName" value="${S.esc(m.name || "")}"></div>
+      <div class="form-row"><label>是否品牌方</label><select id="mIsBrand"><option value="">未设置</option><option value="品牌方" ${m.is_brand === "品牌方" ? "selected" : ""}>品牌方</option><option value="非品牌方" ${m.is_brand === "非品牌方" ? "selected" : ""}>非品牌方</option></select></div>
+      <div class="form-row"><label>媒介合作频率</label><input id="mFreq" value="${S.esc(m.cooperation_frequency || "")}"></div>
+      <div class="form-row"><label>合作次数</label><input id="mCount" type="number" min="0" value="${m.cooperation_count ?? ""}"></div>
       <div class="form-row"><label>甲方主体信息</label><input id="mParty" value="${S.esc(m.party_a || "")}" placeholder="公司注册主体全称"></div>
       <div class="form-row"><label>联系人</label><input id="mContact" value="${S.esc(m.contact || "")}"></div>
       <div class="form-row"><label>联系人微信</label><input id="mWechat" value="${S.esc(m.wechat || "")}"></div>
@@ -58,6 +66,9 @@ function editModal(m) {
       const name = body.querySelector("#mName").value.trim();
       if (!name) { S.toast("媒介公司名称必填", "err"); return false; }
       const payload = { id: m.id, name,
+        is_brand: body.querySelector("#mIsBrand").value,
+        cooperation_frequency: body.querySelector("#mFreq").value.trim(),
+        cooperation_count: body.querySelector("#mCount").value,
         party_a: body.querySelector("#mParty").value.trim(),
         contact: body.querySelector("#mContact").value.trim(),
         wechat: body.querySelector("#mWechat").value.trim(),
@@ -70,24 +81,31 @@ function editModal(m) {
 }
 
 async function load() {
-  S.$("tbody").innerHTML = `<tr><td colspan="8" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="11" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
   try {
-    const q = S.$("fQ").value.trim();
-    const d = await S.api("/media" + (q ? `?q=${encodeURIComponent(q)}` : ""));
+    const q = S.$("fQ").value.trim(), brand = S.$("fBrand").value, freq = S.$("fFrequency").value;
+    const params = new URLSearchParams(); if (q) params.set("q", q); if (brand) params.set("is_brand", brand); if (freq) params.set("cooperation_frequency", freq);
+    const d = await S.api("/media" + (params.toString() ? `?${params.toString()}` : ""));
     rows = d.rows;
+    const selected = freq;
+    S.$("fFrequency").innerHTML = '<option value="">全部合作频率</option>' + (d.frequencies || []).map(x => `<option value="${S.esc(x)}">${S.esc(x)}</option>`).join("");
+    S.$("fFrequency").value = selected;
     render();
   } catch (e) {
-    S.$("tbody").innerHTML = `<tr><td colspan="8" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="11" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
   }
 }
 
 function render() {
   if (!rows.length) {
-    S.$("tbody").innerHTML = `<tr><td colspan="8"><div class="empty"><div class="big">🤝</div>暂无合作媒介,询单标记「合作成功」后自动生成</div></td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="11"><div class="empty"><div class="big">🤝</div>暂无合作媒介,询单标记「合作成功」后自动生成</div></td></tr>`;
     return;
   }
   S.$("tbody").innerHTML = rows.map(r => `<tr>
     <td><div class="clamp">${S.esc(r.name)}</div></td>
+    <td>${r.is_brand ? S.badge(r.is_brand, r.is_brand === "品牌方" ? "primary" : "gray") : '<span class="muted">—</span>'}</td>
+    <td>${S.esc(r.cooperation_frequency || "—")}</td>
+    <td class="mono">${r.cooperation_count ?? "—"}</td>
     <td>${r.party_a ? `<div class="clamp">${S.esc(r.party_a)}</div>` : '<span class="muted">待补充</span>'}</td>
     <td>${S.esc(r.contact || "—")}</td>
     <td class="mono">${S.esc(r.wechat || "—")}</td>
@@ -110,7 +128,7 @@ function render() {
 
 S.$("addBtn").onclick = () => editModal(null);
 S.$("searchBtn").onclick = load;
-S.$("resetBtn").onclick = () => { S.$("fQ").value = ""; load(); };
+S.$("resetBtn").onclick = () => { S.$("fQ").value = ""; S.$("fBrand").value = ""; S.$("fFrequency").value = ""; load(); };
 S.$("fQ").addEventListener("keydown", e => { if (e.key === "Enter") load(); });
 
 load();

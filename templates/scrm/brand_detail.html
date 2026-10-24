@@ -1,19 +1,22 @@
 {% extends "scrm/base.html" %}
 {% block title %}品牌详情{% endblock %}
 {% block content %}
+<style>
+.brand-back{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px;font-weight:600}.brand-back:hover{color:var(--primary);text-decoration:none}.brand-head-title{margin:8px 0 0;font-size:24px}.brand-hero{position:relative;overflow:hidden;display:flex;align-items:center;gap:20px;padding:22px 24px;border:1px solid var(--border);border-radius:15px;background:var(--card);box-shadow:var(--shadow)}.brand-identity{display:flex;align-items:center;gap:14px;min-width:0;flex:1}.brand-mark{display:grid;place-items:center;width:54px;height:54px;flex:0 0 auto;border-radius:15px;background:var(--primary-soft);color:var(--primary);font-size:22px;font-weight:750}.brand-name{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:21px;font-weight:750;word-break:break-word}.brand-meta{margin-top:7px;color:var(--text-2);font-size:12.5px;line-height:1.65}.brand-metrics{display:grid;grid-template-columns:repeat(6,minmax(76px,1fr));gap:0;min-width:min(610px,57%)}.brand-metric{padding:2px 13px;text-align:center;border-left:1px solid var(--border)}.brand-metric:first-child{border-left:0}.brand-metric b{display:block;font-size:19px;line-height:1.25;color:var(--text);white-space:nowrap}.brand-metric b.primary{color:var(--primary)}.brand-metric b.amber{color:var(--amber)}.brand-metric b.red{color:var(--red)}.brand-metric span{display:block;margin-top:4px;color:var(--text-3);font-size:11px}.brand-layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:14px;margin-top:16px}.brand-content{min-width:0}.brand-ledger{align-self:start}.brand-ledger-toggle{display:flex;width:100%;align-items:center;justify-content:space-between;border:0;background:transparent;color:var(--text);font:inherit;font-weight:700;cursor:pointer;padding:0}.brand-ledger-toggle .chevron{color:var(--primary);transition:transform .18s}.brand-ledger-toggle[aria-expanded="true"] .chevron{transform:rotate(180deg)}.brand-ledger-body{display:none;margin-top:14px;padding-top:13px;border-top:1px solid var(--border)}.brand-ledger-body.open{display:block}.brand-ledger-summary{margin-top:8px;color:var(--text-3);font-size:12px}.brand-table-card{padding:0}.brand-table-title{padding:16px 18px 13px;margin:0!important}.brand-table-title::before{display:none}.brand-table-title .section-note{margin-left:6px;color:var(--text-3);font-size:12px;font-weight:400}.brand-table-card .table-wrap{border-top:1px solid var(--border)}.brand-video-title{max-width:360px}.brand-comment{max-width:420px;line-height:1.5}.brand-status{display:flex;gap:4px;flex-wrap:wrap}.brand-bg{margin-top:15px;padding:11px 13px;border:1px solid var(--border);border-radius:9px;color:var(--text-2);font-size:13px;line-height:1.6}@media(max-width:1250px){.brand-hero{align-items:flex-start;flex-direction:column}.brand-metrics{width:100%;max-width:none}.brand-metric:first-child{padding-left:0}}@media(max-width:900px){.brand-layout{grid-template-columns:1fr}.brand-ledger{order:-1}.brand-metrics{grid-template-columns:repeat(3,1fr);gap:12px}.brand-metric:nth-child(4){border-left:0}.brand-metric{padding:2px 9px}.brand-video-title{max-width:220px}}@media(max-width:560px){.brand-hero{padding:18px}.brand-name{font-size:19px}.brand-metrics{grid-template-columns:repeat(2,1fr);gap:12px}.brand-metric:nth-child(n){border-left:0;text-align:left}.brand-metric b{font-size:18px}}
+</style>
 <div class="page-head">
   <div>
-    <h2><a href="/scrm/brands" style="font-size:15px;">← 返回品牌聚合</a></h2>
-    <div class="sub">合作媒介(品牌)信息、商单展示视频声量与跟进台账</div>
+    <a class="brand-back" href="/scrm/brands">← 返回品牌聚合</a>
+    <h2 class="brand-head-title">品牌详情</h2>
+    <div class="sub">合作媒介信息、商单展示视频与评论声量</div>
   </div>
   <div class="actions">
-    <a class="btn" href="/scrm/media">🤝 合作媒介资料</a>
-    <a class="btn" href="/scrm/brands/funnel">🔻 查看转化漏斗</a>
-    <button class="btn" id="editBtn">✏️ 编辑品牌信息</button>
-    <button class="btn primary" id="followBtn">➕ 新增跟进记录</button>
+    <a class="btn" href="/scrm/media">合作媒介资料</a>
+    <a class="btn" href="/scrm/brands/funnel">查看转化漏斗</a>
+    <button class="btn" id="editBtn">编辑品牌信息</button>
+    <button class="btn primary" id="followBtn">新增跟进记录</button>
   </div>
 </div>
-
 <div id="root"><div class="loading"><span class="spin"></span> 加载中…</div></div>
 {% endblock %}
 
@@ -22,178 +25,119 @@
 const BID = {{ bid }};
 let d = null;
 const SCOLOR = { new: "gray", touching: "primary", intent: "amber", cooperate: "green", lost: "gray" };
-const DEAL_S = { executing: ["执行中", "amber"], published: ["已发布", "primary"], won: ["合作成功", "green"] };
+const DEAL_S = { executing: ["执行中", "amber"], published: ["已发布", "primary"], won: ["合作成功", "green"], kpi_done: ["KPI已完成", "green"], ended: ["已结束", "gray"], canceled: ["已取消", "red"] };
+const money = value => value == null || value === "" ? "—" : `¥${Number(value).toLocaleString("zh-CN", {maximumFractionDigits: 2})}`;
 
 function render() {
-  const b = d.brand;
+  const b = d.brand, average = b.deal_amount_avg;
   S.$("root").innerHTML = `
-    <div class="card">
-      <div class="flex" style="gap:14px;align-items:center;flex-wrap:wrap;">
-        <div class="ec-logo" style="width:52px;height:52px;font-size:22px;border-radius:12px;">${S.esc(b.name.slice(0, 1))}</div>
-        <div style="flex:1;min-width:240px;">
-          <div style="font-size:20px;font-weight:700;">${S.esc(b.name)}
+    <section class="brand-hero">
+      <div class="brand-identity">
+        <div class="brand-mark">${S.esc((b.name || "?").slice(0, 1))}</div>
+        <div>
+          <div class="brand-name">${S.esc(b.name)}
             ${S.badge(d.statuses.find(s => s[0] === b.status)?.[1] || b.status, SCOLOR[b.status] || "gray", true)}
             ${b.source === "auto" ? S.badge("询单联动", "primary") : S.badge("手动录入", "gray")}
           </div>
-          <div class="muted mt8">负责人:${S.esc(b.owner || "待分配")} · 甲方主体:${S.esc(b.party_a || "待补充")}
-            · 联系人:${S.esc(b.contact || "—")}${b.phone ? " / " + S.esc(b.phone) : ""}</div>
-        </div>
-        <div class="flex" style="gap:22px;">
-          <div style="text-align:center;"><b style="font-size:22px;color:var(--primary);">${b.deal_count}</b><div class="muted" style="font-size:12px;">关联商单</div></div>
-          <div style="text-align:center;"><b style="font-size:22px;color:var(--teal);">${b.video_count}</b><div class="muted" style="font-size:12px;">展示视频</div></div>
-          <div style="text-align:center;"><b style="font-size:22px;">${b.comment_count.toLocaleString()}</b><div class="muted" style="font-size:12px;">视频评论</div></div>
-          <div style="text-align:center;"><b style="font-size:22px;color:var(--amber);">${b.intent_count}</b><div class="muted" style="font-size:12px;">购买意向</div></div>
-          <div style="text-align:center;"><b style="font-size:22px;color:var(--red);">${b.negative_count}</b><div class="muted" style="font-size:12px;">负面提及</div></div>
+          <div class="brand-meta">负责人：${S.esc(b.owner || "待分配")}　·　甲方主体：${S.esc(b.party_a || "待补充")}　·　联系人：${S.esc(b.contact || "—")}${b.phone ? " / " + S.esc(b.phone) : ""}</div>
         </div>
       </div>
-      <div class="mt12" style="font-size:13.5px;color:var(--text-2);background:#f7f8fb;border-radius:8px;padding:11px 13px;">
-        ${S.esc(b.background || "暂无品牌背景介绍")}
+      <div class="brand-metrics" aria-label="品牌聚合指标">
+        <div class="brand-metric"><b class="primary">${b.deal_count}</b><span>关联商单</span></div>
+        <div class="brand-metric"><b class="primary">${money(average)}</b><span>商单均价</span></div>
+        <div class="brand-metric"><b>${b.video_count}</b><span>展示视频</span></div>
+        <div class="brand-metric"><b>${b.comment_count.toLocaleString()}</b><span>视频评论</span></div>
+        <div class="brand-metric"><b class="amber">${b.intent_count}</b><span>购买意向</span></div>
+        <div class="brand-metric"><b class="red">${b.negative_count}</b><span>负面提及</span></div>
       </div>
-    </div>
-
-    <div class="card mt16">
-      <div class="card-title">📑 关联商单 <span class="n">${d.deals.length}</span></div>
-      <div class="table-wrap">
-        <table class="data">
-          <thead><tr><th>商单名称</th><th style="width:110px;">品牌/产品</th><th style="width:90px;">状态</th><th style="width:90px;">操作</th></tr></thead>
-          <tbody>
-            ${d.deals.length ? d.deals.map(x => `
-              <tr>
-                <td><div class="clamp">${S.esc(x.name)}</div></td>
-                <td class="muted">${S.esc(x.brand || "-")} / ${S.esc(x.product || "-")}</td>
-                <td>${S.badge((DEAL_S[x.status] || [x.status])[0], (DEAL_S[x.status] || ["gray"])[1])}</td>
-                <td><a class="btn sm" href="/scrm/deals/${x.id}">打开商单</a></td>
-              </tr>`).join("")
-              : '<tr><td colspan="4" class="muted" style="text-align:center;padding:16px;">暂无关联商单</td></tr>'}
-          </tbody>
-        </table>
+    </section>
+    ${b.background ? `<div class="brand-bg">${S.esc(b.background)}</div>` : ""}
+    <div class="brand-layout">
+      <div class="brand-content">
+        ${renderDeals()}
+        ${renderVideos()}
+        ${renderComments()}
       </div>
-    </div>
-
-    <div class="grid cards-2 mt16">
-      <div class="card">
-        <div class="card-title">📒 跟进台账</div>
-        ${d.follows.length ? `<div class="timeline">${d.follows.map(f => `
-          <div class="tl-item">
-            <div class="tl-time">${S.fmtTs(f.created_ts)} · <span class="tl-creator">${S.esc(f.creator)}</span></div>
-            <div class="tl-content">${S.esc(f.content)}</div>
-            ${f.next_plan ? `<div class="sub2 mt8">📌 下一步:${S.esc(f.next_plan)}</div>` : ""}
-          </div>`).join("")}</div>` : S.empty("还没有跟进记录,点击右上角新增", "📒")}
-      </div>
-      <div class="card">
-        <div class="tabs">
-          <button data-tab="videos" class="active">🎬 展示视频 <span class="n">${b.video_count}</span></button>
-          <button data-tab="comments">💬 视频评论 <span class="n">${b.comment_count}</span></button>
-        </div>
-        <div id="mentionBox"></div>
-      </div>
+      ${renderLedger()}
     </div>`;
-
-  renderMentions("videos");
-  S.$$(".tabs button").forEach(btn => btn.onclick = () => {
-    S.$$(".tabs button").forEach(x => x.classList.remove("active"));
-    btn.classList.add("active");
-    renderMentions(btn.dataset.tab);
+  S.$("ledgerToggle").onclick = () => {
+    const button = S.$("ledgerToggle"), body = S.$("ledgerBody"), open = button.getAttribute("aria-expanded") !== "true";
+    button.setAttribute("aria-expanded", String(open)); body.classList.toggle("open", open);
+  };
+  renderCommentTable();
+  S.$$('[data-comment-tab]').forEach(button => button.onclick = () => {
+    S.$$('[data-comment-tab]').forEach(item => item.classList.toggle("active", item === button));
+    renderCommentTable(button.dataset.commentTab);
   });
 }
 
-function renderMentions(tab) {
-  const box = S.$("mentionBox");
-  if (tab === "videos") {
-    const vids = d.video_samples || [];
-    box.innerHTML = vids.length ? `
-      <div style="max-height:480px;overflow-y:auto;">
-      ${vids.map(v => `
-      <div style="padding:10px 2px;border-bottom:1px solid var(--border);">
-        <div class="flex" style="gap:8px;align-items:flex-start;">
-          ${S.platformTag(v.platform || v.m_platform || "")}
-          <div style="flex:1;min-width:0;">
-            <a href="${S.esc(v.url || "#")}" target="_blank">${S.esc(String(v.title || v.m_title || "(未命名展示视频)").slice(0, 80))}</a>
-            <div class="sub2">
-              ${v.account ? "账户:" + S.esc(v.account) + " · " : ""}
-              ${v.matched
-                ? `✅ 已匹配内容库 · UP主:${S.esc(v.m_upname || "-")}`
-                : '<span class="muted">⚠️ 未匹配到内容库(视频可能未爬取)</span>'}
-            </div>
-          </div>
-        </div>
-      </div>`).join("")}
-      </div>` : S.empty("暂无展示视频,请到商单详情页添加视频链接", "🎬");
-  } else {
-    const cs = d.comment_samples || [];
-    box.innerHTML = cs.length ? `
-      <div style="max-height:480px;overflow-y:auto;">
-      ${cs.map(c => `
-      <div style="padding:9px 2px;border-bottom:1px solid var(--border);">
-        <div class="flex" style="gap:6px;">
-          ${S.platformTag(c.platform)}
-          <span class="muted" style="font-size:12px;">${S.esc(c.nickname || "匿名")} · ${S.ago(c.ctime)}</span>
-          ${c.neg ? S.badge("负面", "red") : ""}
-          ${c.intent ? S.badge("意向", "amber") : ""}
-          <a style="margin-left:auto;font-size:12px;" href="/scrm/comments/${c.src_table}/${c.src_pk}">详情</a>
-        </div>
-        <div style="font-size:13px;margin-top:4px;">${S.esc(String(c.content || "").slice(0, 110))}</div>
-      </div>`).join("")}
-      </div>` : S.empty("展示视频下暂无已爬取评论", "💬");
-  }
+function renderDeals() {
+  return `<section class="card brand-table-card">
+    <div class="card-title brand-table-title">关联商单 <span class="section-note">${d.deals.length} 条</span></div>
+    <div class="table-wrap"><table class="data"><thead><tr><th>商单名称</th><th>品牌 / 产品</th><th style="width:105px">商单金额</th><th style="width:95px">状态</th><th style="width:94px">操作</th></tr></thead><tbody>
+      ${d.deals.length ? d.deals.map(x => `<tr><td><div class="clamp">${S.esc(x.name)}</div></td><td class="muted">${S.esc(x.brand || "-")} / ${S.esc(x.product || "-")}</td><td class="mono">${money(x.amount)}</td><td>${S.badge((DEAL_S[x.status] || [x.status])[0], (DEAL_S[x.status] || ["gray"])[1])}</td><td><a class="btn sm" href="/scrm/deals/${x.id}">打开</a></td></tr>`).join("") : '<tr><td colspan="5" class="muted" style="text-align:center;padding:18px;">暂无关联商单</td></tr>'}
+    </tbody></table></div></section>`;
+}
+
+function renderVideos() {
+  const rows = d.video_samples || [];
+  return `<section class="card brand-table-card mt16">
+    <div class="card-title brand-table-title">展示视频 <span class="section-note">商单发布链接与内容库匹配结果</span></div>
+    <div class="table-wrap"><table class="data"><thead><tr><th style="width:80px">平台</th><th>视频标题</th><th style="width:120px">账户 / UP主</th><th style="width:105px">内容状态</th><th style="width:95px">操作</th></tr></thead><tbody>
+      ${rows.length ? rows.map(v => `<tr><td>${S.platformTag(v.platform || v.m_platform || "—")}</td><td class="brand-video-title"><div class="clamp">${v.url ? `<a href="${S.esc(v.url)}" target="_blank">${S.esc(String(v.title || v.m_title || "未命名展示视频"))}</a>` : S.esc(v.title || "待补充视频链接")}</div></td><td><div>${S.esc(v.account || "—")}</div><div class="sub2">${v.matched ? `UP主：${S.esc(v.m_upname || "—")}` : "—"}</div></td><td>${v.matched ? S.badge("已匹配", "green", true) : S.badge("待匹配", "gray", true)}</td><td>${v.matched ? `<a class="btn sm" href="/scrm/videos?platform=${encodeURIComponent(v.m_platform || v.platform || "")}">查看内容</a>` : "—"}</td></tr>`).join("") : `<tr><td colspan="5">${S.empty("暂无展示视频，请到商单详情页添加视频链接", "🎬")}</td></tr>`}
+    </tbody></table></div></section>`;
+}
+
+function commentStatus(c) {
+  if (c.handled) return S.badge("已处理", "green", true);
+  if (c.reviewed) return S.badge("已审核", "primary", true);
+  if (c.analyzed) return S.badge("待处理", "amber", true);
+  return S.badge("待分析", "gray", true);
+}
+function negativeLabel(c) {
+  if (!c.neg) return "—";
+  return S.badge(c.comment_type ? `负面·${c.comment_type}` : (c.highneg ? "高级负面" : "负面"), "red");
+}
+function renderComments() {
+  const rows = d.comment_samples || [];
+  return `<section class="card brand-table-card mt16">
+    <div class="card-title brand-table-title">视频评论 <span class="section-note">按评论信号分类处理</span></div>
+    <div class="tabs" style="padding:0 18px;margin-bottom:0"><button data-comment-tab="intent" class="active">购买意向 <span class="n">${rows.filter(c => c.intent).length}</span></button><button data-comment-tab="negative">负面 <span class="n">${rows.filter(c => c.neg).length}</span></button><button data-comment-tab="other">其他 <span class="n">${rows.filter(c => !c.intent && !c.neg).length}</span></button></div>
+    <div id="commentTable"></div></section>`;
+}
+
+function renderCommentTable(tab = "intent") {
+  const all = d.comment_samples || [];
+  const rows = tab === "intent" ? all.filter(c => c.intent) : tab === "negative" ? all.filter(c => c.neg) : all.filter(c => !c.intent && !c.neg);
+  const label = {intent:"购买意向", negative:"负面", other:"其他"}[tab];
+  S.$("commentTable").innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th style="width:74px">平台</th><th style="width:120px">评论用户</th><th>评论内容</th><th style="width:115px">评论类型</th><th style="width:110px">购买意向</th><th style="width:145px">负面分类</th><th style="width:92px">状态</th><th style="width:70px">操作</th></tr></thead><tbody>
+    ${rows.length ? rows.map(c => `<tr><td>${S.platformTag(c.platform || "—")}</td><td><div class="clamp">${S.esc(c.nickname || "匿名")}</div><div class="sub2">${S.ago(c.ctime)}</div></td><td class="brand-comment"><div class="clamp">${S.esc(c.content || "—")}</div></td><td>${c.comment_type ? S.badge(c.comment_type, c.neg ? "red" : "primary") : '<span class="muted">未分类</span>'}</td><td>${c.intent ? S.badge("有购买意向", "amber", true) : S.badge("无明显意向", "gray")}</td><td>${negativeLabel(c)}</td><td>${commentStatus(c)}</td><td><a class="btn sm ghost" href="/scrm/comments/${c.src_table}/${c.src_pk}">详情</a></td></tr>`).join("") : `<tr><td colspan="8">${S.empty(`暂无${label}评论`, "💬")}</td></tr>`}
+  </tbody></table></div>`;
+}
+
+function renderLedger() {
+  const count = d.follows.length;
+  return `<aside class="card brand-ledger">
+    <button class="brand-ledger-toggle" id="ledgerToggle" type="button" aria-expanded="false"><span>跟进台账</span><span class="chevron">⌄</span></button>
+    <div class="brand-ledger-summary">${count ? `共 ${count} 条记录，默认收起` : "暂无跟进记录"}</div>
+    <div class="brand-ledger-body" id="ledgerBody">${count ? `<div class="timeline">${d.follows.map(f => `<div class="tl-item"><div class="tl-time">${S.fmtTs(f.created_ts)} · <span class="tl-creator">${S.esc(f.creator)}</span></div><div class="tl-content">${S.esc(f.content)}</div>${f.next_plan ? `<div class="sub2 mt8">下一步：${S.esc(f.next_plan)}</div>` : ""}</div>`).join("")}</div>` : S.empty("点击右上角新增跟进记录", "📒")}</div>
+  </aside>`;
 }
 
 function editModal() {
   const b = d.brand;
-  S.modal({
-    title: "编辑品牌信息",
-    body: `
-      <div class="form-grid">
-        <div class="form-row"><label>跟进状态</label>
-          <select id="fStatus">${d.statuses.map(s =>
-            `<option value="${s[0]}" ${s[0] === b.status ? "selected" : ""}>${s[1]}</option>`).join("")}</select></div>
-        <div class="form-row"><label>负责人</label>
-          <select id="fOwner"><option value="">待分配</option>
-            ${d.team.map(t => `<option ${t === b.owner ? "selected" : ""}>${t}</option>`).join("")}</select></div>
-      </div>
-      <div class="form-row"><label>品牌背景</label>
-        <textarea id="fBg">${S.esc(b.background || "")}</textarea></div>
-      <div class="sub2">甲方主体、联系人、手机号等资料请到「合作媒介」页维护</div>`,
-    okText: "保存",
-    onOk: async (el) => {
-      await S.api(`/brands/${BID}/update`, { method: "POST", body: {
-        status: el.querySelector("#fStatus").value,
-        owner: el.querySelector("#fOwner").value || null,
-        background: el.querySelector("#fBg").value,
-      }});
-      S.toast("品牌信息已保存", "ok");
-      load();
-    },
-  });
+  S.modal({title: "编辑品牌信息", body: `
+    <div class="form-grid"><div class="form-row"><label>跟进状态</label><select id="fStatus">${d.statuses.map(s => `<option value="${s[0]}" ${s[0] === b.status ? "selected" : ""}>${s[1]}</option>`).join("")}</select></div>
+    <div class="form-row"><label>负责人</label><select id="fOwner"><option value="">待分配</option>${d.team.map(t => `<option ${t === b.owner ? "selected" : ""}>${t}</option>`).join("")}</select></div></div>
+    <div class="form-row"><label>品牌背景</label><textarea id="fBg">${S.esc(b.background || "")}</textarea></div><div class="sub2">甲方主体、联系人、手机号等资料请到「合作媒介」页维护</div>`,
+    okText: "保存", onOk: async el => { await S.api(`/brands/${BID}/update`, {method:"POST",body:{status:el.querySelector("#fStatus").value,owner:el.querySelector("#fOwner").value || null,background:el.querySelector("#fBg").value}}); S.toast("品牌信息已保存", "ok"); load(); }});
 }
-
 function followModal() {
-  S.modal({
-    title: "新增品牌跟进记录",
-    body: `
-      <div class="form-row"><label>跟进内容 *</label>
-        <textarea id="fContent" placeholder="如:已通过商务渠道联系品牌市场部,对方对测评合作感兴趣,下周约线上会"></textarea></div>
-      <div class="form-row"><label>下一步计划</label>
-        <input id="fPlan" placeholder="如:9月30日前发送合作方案与报价"></div>`,
-    okText: "提交记录",
-    onOk: async (el) => {
-      const content = el.querySelector("#fContent").value.trim();
-      if (!content) { S.toast("请填写跟进内容", "err"); return false; }
-      await S.api(`/brands/${BID}/follow`, { method: "POST", body: {
-        content, next_plan: el.querySelector("#fPlan").value, creator: "运营",
-      }});
-      S.toast("跟进记录已提交", "ok");
-      load();
-    },
-  });
+  S.modal({title: "新增品牌跟进记录", body: `<div class="form-row"><label>跟进内容 *</label><textarea id="fContent" placeholder="如：已联系品牌市场部，对方对测评合作感兴趣"></textarea></div><div class="form-row"><label>下一步计划</label><input id="fPlan" placeholder="如：9月30日前发送合作方案与报价"></div>`,
+    okText: "提交记录", onOk: async el => { const content = el.querySelector("#fContent").value.trim(); if (!content) { S.toast("请填写跟进内容", "err"); return false; } await S.api(`/brands/${BID}/follow`, {method:"POST",body:{content,next_plan:el.querySelector("#fPlan").value,creator:"运营"}}); S.toast("跟进记录已提交", "ok"); load(); }});
 }
-
-async function load() {
-  d = await S.api(`/brands/${BID}`);
-  render();
-}
-S.$("editBtn").onclick = () => editModal();
-S.$("followBtn").onclick = () => followModal();
+async function load() { d = await S.api(`/brands/${BID}`); render(); }
+S.$("editBtn").onclick = editModal; S.$("followBtn").onclick = followModal;
 load().catch(e => S.$("root").innerHTML = `<div class="err-banner">${S.esc(e.message)}</div>`);
 </script>
 {% endblock %}

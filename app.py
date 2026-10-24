@@ -8,6 +8,7 @@ import csv
 import io
 import json
 import logging
+import os
 import time
 import threading
 from functools import wraps
@@ -17,14 +18,17 @@ from flask import Flask, request, jsonify, Response, render_template, stream_wit
 from config import COMMENT_TABLES
 from db import (
     get_conn, list_tables, valid_table, get_columns,
-    parse_filters, build_where, ensure_comment_columns, ensure_content_category_columns,
+    parse_filters, build_where, ensure_comment_columns, ensure_content_category_columns, mark_self_replies_handled,
 )
 from analyzer import analyzer_loop, get_status_dict
-from scrm import bp as scrm_bp, init_scrm
+from scrm import bp as scrm_bp, init_scrm, start_product_recognition_worker
+from knowledge import init_kb, kb_bp
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
+app.config["SECRET_KEY"] = os.environ.get("SCRM_SECRET_KEY", "scrm-local-session-key-change-in-production")
 app.config["TEMPLATES_AUTO_RELOAD"] = True  # 模板热更新,改 HTML 不必重启服务
 app.register_blueprint(scrm_bp)
+app.register_blueprint(kb_bp)
 from auto_tasks import bp as auto_tasks_bp
 app.register_blueprint(auto_tasks_bp)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -174,13 +178,15 @@ def api_analyze_status():
 @app.route("/api/analyze/reset/<table>", methods=["POST"])
 @require_table
 def api_analyze_reset(table):
-    """重置分析状态便于重跑(analyzed/negative_alert/purchase_intent 清零,reply_suggestion 置空)
+    """重置分析状态便于重跑(analyzed/negative_alert/high_negative/purchase_intent/comment_type/human_review 清零；人工回复保留)
     人工已处理(handled=1)的评论不受影响"""
     with get_conn() as conn:
         with conn.cursor() as cur:
             n = cur.execute(
-                f"UPDATE `{table}` SET `analyzed`=0, `negative_alert`=0, "
-                f"`purchase_intent`=0, `reply_suggestion`=NULL WHERE IFNULL(`handled`,0)=0"
+                f"UPDATE `{table}` SET `analyzed`=0, `negative_alert`=0, `high_negative`=0, "
+                f"`purchase_intent`=0, `comment_type`=NULL, `human_review`=0, "
+                f"`reply_suggestion`=CASE WHEN IFNULL(`reply_manual_override`,0)=1 THEN `reply_suggestion` ELSE NULL END "
+                f"WHERE IFNULL(`handled`,0)=0"
             )
         conn.commit()
     return jsonify({"reset": table, "affected": n})
@@ -223,6 +229,25 @@ def ensure_auto_task_table():
                   KEY `idx_status_platform` (`status`, `platform`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评论自动操作任务'
             """)
+            cur.execute("""SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+                           WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='comment_auto_task'""")
+            existing = {row['name'] for row in cur.fetchall()}
+            additions = {
+                'claim_owner': "VARCHAR(255) NULL COMMENT '数据库领取者'",
+                'claimed_ts': "BIGINT NULL COMMENT '领取时间'",
+                'attempt_count': "INT NOT NULL DEFAULT 0 COMMENT '发送尝试次数'",
+                'next_attempt_ts': "BIGINT NULL COMMENT '下次可调度时间'",
+                'verify_after_ts': "BIGINT NULL COMMENT '待确认任务下次核验时间'",
+                'verify_attempts': "INT NOT NULL DEFAULT 0 COMMENT '核验次数'",
+            }
+            for name, definition in additions.items():
+                if name not in existing:
+                    cur.execute(f"ALTER TABLE comment_auto_task ADD COLUMN `{name}` {definition}")
+            cur.execute("""SELECT COUNT(*) AS n FROM information_schema.STATISTICS
+                           WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='comment_auto_task'
+                             AND INDEX_NAME='idx_dispatch'""")
+            if not cur.fetchone()['n']:
+                cur.execute("CREATE INDEX idx_dispatch ON comment_auto_task(status, next_attempt_ts, created_ts)")
         conn.commit()
 
 def ensure_zhihu_comment_url_column():
@@ -308,7 +333,7 @@ def _create_bilibili_auto_task(cur, rid):
     else:
         return "skipped", "未达到自动操作条件"
     cookie_account = _get_bilibili_cookie_account(cur, row.get("account_nickname"))
-    status = "pending" if cookie_account else "failed"
+    status = "queued" if cookie_account else "failed"
     error = None if cookie_account else "所属B站账号缺少cookie，请先给该账号配置Bit窗口并同步cookie"
     account_name = row.get("account_nickname")
     cur.execute("""
@@ -349,7 +374,7 @@ def _create_douyin_auto_task(cur, rid):
     else:
         return "skipped", "未达到自动操作条件"
     bit_window = str(row.get("bit_window") or "").strip()
-    status = "pending" if bit_window else "failed"
+    status = "queued" if bit_window else "failed"
     error = None if bit_window else "缺少Bit窗口"
     cur.execute("""
         INSERT INTO comment_auto_task
@@ -381,7 +406,7 @@ def _create_xhs_auto_task(cur, rid):
       (platform,src_table,src_pk,comment_id,content_id,account_nickname,bit_window,action_type,status,error_message,created_ts)
       VALUES ('小红书','xhs_note_comment',%s,%s,%s,%s,%s,%s,%s,%s,%s)
       ON DUPLICATE KEY UPDATE bit_window=VALUES(bit_window),status=IF(status IN ('success','running'),status,VALUES(status)),error_message=IF(status IN ('success','running'),error_message,VALUES(error_message))""",
-      (row['id'],row.get('comment_id'),row.get('note_id'),row.get('account_name') or row.get('creator_hash'),bit,action,'pending' if bit else 'failed',None if bit else '缺少Bit窗口',int(time.time())))
+      (row['id'],row.get('comment_id'),row.get('note_id'),row.get('account_name') or row.get('creator_hash'),bit,action,'queued' if bit else 'failed',None if bit else '缺少Bit窗口',int(time.time())))
     return "created", action
 
 def _create_zhihu_auto_task(cur, rid):
@@ -400,7 +425,7 @@ def _create_zhihu_auto_task(cur, rid):
       (platform,src_table,src_pk,comment_id,content_id,account_nickname,bit_window,action_type,status,error_message,created_ts)
       VALUES ('知乎','zhihu_comment',%s,%s,%s,%s,%s,%s,%s,%s,%s)
       ON DUPLICATE KEY UPDATE bit_window=VALUES(bit_window),status=IF(status IN ('success','running'),status,VALUES(status)),error_message=IF(status IN ('success','running'),error_message,VALUES(error_message))""",
-      (row['id'],row.get('comment_id'),row.get('content_id'),row.get('user_nickname'),bit,action,'pending' if bit else 'failed',None if bit else '缺少Bit窗口',int(time.time())))
+      (row['id'],row.get('comment_id'),row.get('content_id'),row.get('user_nickname'),bit,action,'queued' if bit else 'failed',None if bit else '缺少Bit窗口',int(time.time())))
     return "created", action
 
 
@@ -561,34 +586,32 @@ def api_comment_auto_operate():
         details.append({"table": table, "id": rid, "status": status, "info": info})
     if not selected:
         return jsonify({"error": "请先选择评论"}), 400
-    queued = 0
-    for task_id in created_task_ids:
-        try:
-            from auto_tasks import launch_task
-            queued += int(launch_task(task_id))
-        except Exception as exc:
-            logger.exception("自动任务 %s 启动失败: %s", task_id, exc)
     return jsonify({"ok": True, "selected": selected, "created": created,
-                    "skipped": skipped, "queued": queued,
-                    "waiting_for_retry": len(created_task_ids) - queued,
+                    "skipped": skipped, "queued": len(created_task_ids),
+                    "waiting_for_retry": 0,
                     "details": details[:50]})
 
 
 @app.route("/api/comment/update", methods=["POST"])
 def api_comment_update():
-    """人工修改分析字段:negative_alert/purchase_intent/reply_suggestion"""
+    """人工修改分析字段:negative_alert/purchase_intent/comment_type/reply_suggestion"""
     table, rid, err = _parse_comment_payload()
     if err:
         return err
     body = request.get_json(silent=True) or {}
     sets, params = [], []
-    for k in ("negative_alert", "purchase_intent"):
+    for k in ("negative_alert", "purchase_intent", "high_negative"):
         if k in body:
             sets.append(f"`{k}`=%s")
             params.append(1 if body[k] else 0)
+    if "comment_type" in body:
+        sets.append("`comment_type`=%s")
+        params.append(str(body["comment_type"] or "").strip()[:64] or None)
     if "reply_suggestion" in body:
         sets.append("`reply_suggestion`=%s")
         params.append(str(body["reply_suggestion"] or "")[:1000])
+        # 人工保存后的文本是最终操作文案；后续重新生成仅更新分析标签。
+        sets.append("`reply_manual_override`=1")
     if not sets:
         return jsonify({"error": "没有可更新的分析字段"}), 400
     sets.append("`last_modify_ts`=UNIX_TIMESTAMP()")
@@ -641,16 +664,24 @@ def api_comment_calibration():
 
 def start_background():
     """启动后台分析守护线程 + 确保评论表字段就位"""
+    content_added = ensure_content_category_columns()
+    if content_added:
+        logger.info("已新增视频业务字段: %s", ", ".join(content_added))
     init_scrm()
+    init_kb()
+    ensure_auto_task_table()
     ensure_zhihu_comment_url_column()
     added = ensure_comment_columns()
     if added:
         logger.info("已新增分析字段: %s", ", ".join(added))
-    content_added = ensure_content_category_columns()
-    if content_added:
-        logger.info("已新增视频分类字段: %s", ", ".join(content_added))
+    handled_self_replies = mark_self_replies_handled()
+    if handled_self_replies:
+        logger.info("已自动标记 %s 条本人回复为已处理", handled_self_replies)
+    start_product_recognition_worker()
     t = threading.Thread(target=analyzer_loop, name="analyzer", daemon=True)
     t.start()
+    from reply_dispatcher import start_dispatcher
+    start_dispatcher()
     logger.info("评论 AI 分析守护线程已启动")
 
 

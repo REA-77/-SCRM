@@ -120,7 +120,7 @@ async function load() {
       S.$("tbody").innerHTML = rows.map((r, i) => `
         <tr class="${r.handled ? "" : "row-neg"}">
           <td>${r.level === "high" ? S.badge("🔥 高级", "red", true) : S.badge("普通", "amber", true)}</td>
-          <td>负面情感告警</td>
+          <td>${S.esc(r.alert_type || "负面情感告警")}</td>
           <td>${S.platformTag(r.platform)}</td>
           <td class="cell-content">
             <a href="/scrm/comments/${r.src_table}/${r.src_pk}"><div class="clamp">${S.esc(r.content)}</div></a>

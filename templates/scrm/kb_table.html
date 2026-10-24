@@ -1,0 +1,570 @@
+{% extends "scrm/base.html" %}
+{% block title %}知识库 · {{ meta.title }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2><a href="/scrm/kb" style="font-size:15px;">← 返回知识库</a></h2>
+    <div class="sub"><span class="mono">{{ table }}</span> · {{ meta.layer }} · {{ meta.title }}
+      {% if meta.get("readonly") %}<span class="badge gray">只读(系统写入)</span>{% endif %}</div>
+  </div>
+  <div class="actions" id="headActions"></div>
+</div>
+
+<div class="card">
+  <div class="filter-bar" style="box-shadow:none;border:1px solid var(--border);">
+    <input type="text" id="fQ" placeholder="搜索…" style="min-width:220px;">
+    {% if table == "model_facts" or table == "category_pain_point_params" %}
+    <select id="fState">
+      <option value="">全部状态</option>
+      <option value="pending">待确认（pending）</option>
+      <option value="usable">可用（usable）</option>
+      {% if table == "model_facts" %}
+      <option value="reference_only">仅参考（reference_only）</option>
+      {% endif %}
+      <option value="disabled">已停用（disabled）</option>
+    </select>
+    {% endif %}    <select id="fSize">
+      <option value="20" selected>20 条/页</option>
+      <option value="50">50 条/页</option>
+      <option value="100">100 条/页</option>
+    </select>
+    <div class="spacer"></div>
+    {% if not meta.get("readonly") %}
+    <button class="btn primary" id="addBtn">➕ 新增</button>
+    {% endif %}
+  </div>
+  <div class="table-wrap">
+    <table class="data">
+      <thead><tr id="theadRow"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="pager" id="pager"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const TABLE = {{ table | tojson }};
+const READONLY = {{ meta.get("readonly", false) | tojson }};
+let cols = [], pk = "", page = 1, size = 20, showCols = [], painPointNames = {}, modelNames = {};
+
+(async () => {
+  const d = await S.api(`/kb/${TABLE}/columns`);
+  cols = d.cols; pk = d.pk;
+  if (TABLE === "category_pain_point_params" || TABLE === "model_pain_point_matches") {
+    const pains = await S.api("/kb/category_pain_points?size=200");
+    painPointNames = Object.fromEntries(pains.rows.map(row => [row.pain_point_id, row.pain_point]));
+  }
+  if (TABLE === "model_pain_point_matches") {
+    const models = await S.api("/kb/model_facts?size=200");
+    modelNames = Object.fromEntries(models.rows.map(row => [row.model_id, row.model_name]));
+  }
+  showCols = TABLE === "model_facts"
+    ? cols.filter(c => ["model_id", "brand", "model_name", "category", "price_min", "price_max", "price_step", "specs", "confidence", "state"].includes(c.name))
+    : cols.filter(c => !c.auto).slice(0, 6);
+  if (TABLE === "category_pain_point_params") {
+    showCols = showCols.map(c => c.name === "pain_point_id" ? {...c, label: "痛点名称"} : c);
+  }
+  if (TABLE === "model_pain_point_matches") {
+    showCols = showCols.map(c => {
+      if (c.name === "model_id") return {...c, label: "产品名称"};
+      if (c.name === "pain_point_id") return {...c, label: "痛点名称"};
+      if (c.name === "matched_params") return {...c, label: "匹配参数"};
+      return c;
+    });
+  }
+  S.$("theadRow").innerHTML = showCols.map(c =>
+    `<th title="${S.esc(c.comment)}">${S.esc(c.label)}（${S.esc(c.name)}）</th>`).join("") +
+    (READONLY ? "" : `<th style="width:130px;">操作</th>`);
+  if (READONLY) S.$("headActions").innerHTML = "";
+  if (TABLE === "category_pain_point_params") {
+    S.$("headActions").innerHTML = `<button class="btn primary" id="aiSuggestBtn">✨ AI 生成待审核映射</button>`;
+    S.$("aiSuggestBtn").onclick = suggestMappings;
+  }
+  load();
+})();
+
+async function load() {
+  const p = new URLSearchParams({ page, size });
+  if (S.$("fQ").value.trim()) p.set("q", S.$("fQ").value.trim());
+  if (S.$("fState") && S.$("fState").value) p.set("state", S.$("fState").value);
+  S.$("tbody").innerHTML = `<tr><td colspan="${showCols.length + 1}" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  const d = await S.api(`/kb/${TABLE}?` + p.toString());
+  if (!d.rows.length) {
+    S.$("tbody").innerHTML = `<tr><td colspan="${showCols.length + 1}"><div class="empty"><div class="big">📭</div>暂无数据</div></td></tr>`;
+  } else {
+    S.$("tbody").innerHTML = d.rows.map(r => `
+      <tr data-pk="${S.esc(String(r[pk] ?? ""))}">
+        ${showCols.map(c => `<td>${fmtCell(r[c.name], c.name)}</td>`).join("")}
+        ${READONLY ? "" : `<td class="nowrap">
+          ${r.state === "pending" ? `<button class="btn sm primary" onclick="confirmRow(this)">✔ 确认可用</button> ` : ""}
+          <button class="btn sm" onclick="editRow(this)">编辑</button>
+          <button class="btn sm" onclick="delRow(this)" style="color:var(--red);">删除</button>
+        </td>`}
+      </tr>`).join("");
+  }
+  S.pager(S.$("pager"), d.total, page, size, x => { page = x; load(); });
+}
+
+// ---------- 展示层：JSON 一律渲染为标签/表格，不出现原始 JSON 或键值对文本 ----------
+const PARAM_LABELS = {level:"账号等级",address:"称呼观众",length:"句长",length_drift:"字数漂移",emotion:"情绪",delay_minutes:"延迟分钟",reply_rate_default:"回复率",filler_whitelist:"可用语气词",punctuation:"标点规则",catchphrases:"口头禅",never:"绝不做什么",allowed_categories:"可覆盖品类",core_style:"核心风格",translation_style:"翻译风格",translation_experience:"经验视角",few_shot_slots:"示例槽位"};
+const RULE_LABELS = {must_ask_back:"必须追问",must_have_sequence:"必须分步骤",no_price:"禁止出现价格",length_drift:"字数漂移"};
+const LEVEL_LABELS = {L1:"L1",L2:"L2",L3:"L3",L4:"L4",L5:"L5"};
+const DISPLAY_LABELS = {
+  persona_pack: {params: PARAM_LABELS, fingerprint: PARAM_LABELS},
+  routing_matrix: {extra_rule: RULE_LABELS},
+  misconception: {tpl_by_level: LEVEL_LABELS},
+  account_registry: {categories: {categories:"品类"}},
+};
+
+function parseMaybeJson(v) {
+  if (typeof v !== "string") return v;
+  const s = v.trim();
+  if (!s.startsWith("[") && !s.startsWith("{")) return v;
+  try { return JSON.parse(s); } catch { return v; }
+}
+function valText(v) {
+  if (Array.isArray(v)) return v.map(valText).filter(x => x !== "").join("、");
+  if (v && typeof v === "object") {
+    if ("min" in v && "max" in v && Object.keys(v).length <= 3)
+      return ("rate" in v ? `${v.rate} · ` : "") + `${v.min}–${v.max}`;
+    return Object.entries(v).map(([k, x]) => `${k}: ${valText(x)}`).join("；");
+  }
+  return String(v ?? "");
+}
+function chipsHtml(arr) {
+  return `<div style="display:flex;flex-wrap:wrap;gap:4px;">` +
+    arr.map(x => `<span class="badge gray">${S.esc(valText(x))}</span>`).join("") + `</div>`;
+}
+function objTableHtml(v, labels) {
+  const entries = Object.entries(v || {}).filter(([, x]) => x !== null && x !== undefined && x !== "");
+  if (!entries.length) return '<span class="muted">—</span>';
+  return `<table class="data" style="min-width:340px;font-size:12px;"><tbody>` +
+    entries.map(([k, x]) => `<tr>
+      <td class="muted" style="white-space:nowrap;">${S.esc((labels && labels[k]) || k)}</td>
+      <td>${Array.isArray(x) ? chipsHtml(x) : S.esc(valText(x))}</td>
+    </tr>`).join("") + `</tbody></table>`;
+}
+
+function fmtCell(v, name) {
+  if (v === null || v === undefined || v === "") return '<span class="muted">—</span>';
+  if (TABLE === "category_pain_point_params" && name === "pain_point_id") {
+    return S.esc(painPointNames[v] || String(v));
+  }
+  if (TABLE === "model_pain_point_matches" && name === "model_id") {
+    return S.esc(modelNames[v] || String(v));
+  }
+  if (TABLE === "model_pain_point_matches" && name === "pain_point_id") {
+    return S.esc(painPointNames[v] || String(v));
+  }
+  if (TABLE === "model_pain_point_matches" && name === "matched_params") {
+    const matched = parseMaybeJson(v);
+    if (!Array.isArray(matched) || !matched.length) return '<span class="muted">—</span>';
+    return `<div style="display:flex;flex-direction:column;gap:4px;">${matched.map(item => {
+      const values = (item.model_specs || []).map(spec => {
+        const detail = spec.value || {};
+        const value = detail.value ?? detail;
+        return String(value) + (detail.unit ? ` ${detail.unit}` : "");
+      }).filter(Boolean).join("、");
+      return `<span>${S.esc(item.param_name || "参数")}：${S.esc(values || "已匹配")}</span>`;
+    }).join("")}</div>`;
+  }
+  if (TABLE === "model_facts" && name === "state") {
+    const map = {
+      pending: ['待确认', 'background:#fff7e6;color:#b25e00;border:1px solid #f0c78a;'],
+      usable: ['可用', 'background:#eefaf0;color:#1a7f37;border:1px solid #b7dfc0;'],
+      reference_only: ['仅参考', 'background:#f2f3f5;color:#666;border:1px solid #ddd;'],
+    };
+    const [label, style] = map[v] || [String(v), ''];
+    return `<span class="badge" style="${style}">${S.esc(label)}</span>`;
+  }
+  v = parseMaybeJson(v);
+  if (TABLE === "model_facts" && name === "specs" && typeof v === "object") {
+    const labels = {series:"系列", installation:"安装方式", capacity:"容量", drying:"干燥方式", sterilization:"消毒方式", rated_voltage:"额定电压", rated_frequency:"额定频率", water_consumption:"耗水量", rated_power:"额定功率", shell_material:"外壳材质", dimensions:"外形尺寸", cabinet_cutout:"橱柜预留尺寸", programs:"洗涤程序"};
+    return `<table class="data" style="min-width:360px;font-size:12px;"><tbody>${Object.entries(v).map(([k, x]) => {
+      const value = Array.isArray(x?.value) ? x.value.join("、") : (x?.value ?? x);
+      const unit = x?.unit ? " " + x.unit : "";
+      return `<tr><td class="muted">${S.esc(labels[k] || "参数")}（${S.esc(k)}）</td><td>${S.esc(String(value) + unit)}</td><td class="muted">${S.esc(x?.condition || "")}</td></tr>`;
+    }).join("")}</tbody></table>`;
+  }
+  if (Array.isArray(v)) return v.length ? chipsHtml(v) : '<span class="muted">（空列表）</span>';
+  if (typeof v === "object") {
+    const labels = (DISPLAY_LABELS[TABLE] || {})[name];
+    return objTableHtml(v, labels);
+  }
+  const s = String(v);
+  return S.esc(s.length > 90 ? s.slice(0, 90) + "…" : s);
+}
+
+const SPEC_LABELS = {series:"系列", installation:"安装方式", capacity:"容量", drying:"干燥方式", sterilization:"消毒方式", rated_voltage:"额定电压", rated_frequency:"额定频率", water_consumption:"耗水量", rated_power:"额定功率", shell_material:"外壳材质", dimensions:"外形尺寸", cabinet_cutout:"橱柜预留尺寸", programs:"洗涤程序"};
+
+function specEditor(specs) {
+  const rows = Object.entries(specs && typeof specs === "object" ? specs : {}).map(([key, item]) => specRow(key, item));
+  return `<div class="table-wrap" style="border:1px solid var(--border);border-radius:8px;">
+    <table class="data" style="min-width:680px;font-size:12px;"><thead><tr>
+      <th>参数名称（中文）</th><th>参数键（英文）</th><th>参数值</th><th>单位</th><th>适用条件</th><th></th>
+    </tr></thead><tbody class="spec-rows">${rows.join("")}</tbody></table>
+  </div><button type="button" class="btn sm" style="margin-top:8px;" onclick="addSpecRow(this)">＋ 添加参数</button>`;
+}
+
+function specRow(key = "", item = {}) {
+  const value = Array.isArray(item?.value) ? item.value.join("、") : (item?.value ?? "");
+  return `<tr class="spec-row">
+    <td class="spec-label muted">${S.esc(SPEC_LABELS[key] || "自定义参数")}</td>
+    <td><input class="spec-key" value="${S.esc(key)}" placeholder="如 rated_power"></td>
+    <td><input class="spec-value" value="${S.esc(String(value))}" placeholder="数值或文字"></td>
+    <td><input class="spec-unit" value="${S.esc(item?.unit || "")}" placeholder="如 W"></td>
+    <td><input class="spec-condition" value="${S.esc(item?.condition || "")}" placeholder="如 官方产品参数"></td>
+    <td><button type="button" class="btn sm" style="color:var(--red);" onclick="this.closest('tr').remove()">删除</button></td>
+  </tr>`;
+}
+
+window.addSpecRow = btn => {
+  const tbody = btn.previousElementSibling.querySelector(".spec-rows");
+  tbody.insertAdjacentHTML("beforeend", specRow());
+};
+
+// ---------- JSON 结构化编辑器：编辑时也不出现原始 JSON ----------
+const JSON_KIND = {
+  persona_pack: {params: "params", fingerprint: "kv"},
+  routing_matrix: {extra_rule: "rules"},
+  guardrails: {trigger_pattern: "tags"},
+  glossary: {alias: "tags", account_visibility: "tags"},
+  misconception: {trigger_words: "tags", trigger_synonyms: "tags", l_level_ok: "tags", tpl_by_level: "kv"},
+  account_registry: {categories: "tags", platform_uids: "kv"},
+};
+
+function tagsEditor(name, value) {
+  let items = Array.isArray(value) ? value.map(x => typeof x === "object" ? JSON.stringify(x) : String(x)) : [];
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `<input type="hidden" name="${name}">
+    <div class="tag-box" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;"></div>
+    <div style="display:flex;gap:6px;"><input class="tag-new" placeholder="输入后回车或点添加" style="flex:1;"><button type="button" class="btn sm tag-add">＋ 添加</button></div>
+    <div class="sub2" style="margin-top:4px;">点击标签可删除</div>`;
+  const hidden = wrap.querySelector(`[name="${name}"]`), box = wrap.querySelector(".tag-box"), input = wrap.querySelector(".tag-new");
+  const sync = () => {
+    hidden.value = JSON.stringify(items);
+    box.innerHTML = items.map((x, i) => `<span class="badge gray" data-i="${i}" style="cursor:pointer;" title="点击删除">${S.esc(x)}</span>`).join("") || '<span class="muted">（空）</span>';
+  };
+  const add = () => { const v = input.value.trim(); if (!v) return; items.push(v); input.value = ""; sync(); };
+  wrap.querySelector(".tag-add").onclick = add;
+  input.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); add(); } };
+  box.onclick = e => { const s = e.target.closest("[data-i]"); if (s) { items.splice(Number(s.dataset.i), 1); sync(); } };
+  sync();
+  return wrap;
+}
+
+function kvRowHtml(k = "", v = "") {
+  const val = v && typeof v === "object" ? JSON.stringify(v) : String(v ?? "");
+  return `<tr><td style="width:38%;"><input class="kv-k" value="${S.esc(k)}" placeholder="键，如 douyin"></td>
+    <td><input class="kv-v" value="${S.esc(val)}" placeholder="值"></td>
+    <td style="width:60px;"><button type="button" class="btn sm kv-del" style="color:var(--red);">删除</button></td></tr>`;
+}
+function kvEditor(name, value) {
+  const entries = Object.entries(value && typeof value === "object" ? value : {});
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `<input type="hidden" name="${name}">
+    <div class="table-wrap" style="border:1px solid var(--border);border-radius:8px;"><table class="data" style="font-size:12px;"><thead><tr><th>键</th><th>值</th><th></th></tr></thead>
+    <tbody class="kv-rows">${entries.map(([k, v]) => kvRowHtml(k, v)).join("")}</tbody></table></div>
+    <button type="button" class="btn sm kv-add" style="margin-top:6px;">＋ 添加一项</button>
+    <div class="sub2" style="margin-top:4px;">值填 true/false 识别为开关，其余一律按原文本保存</div>`;
+  const hidden = wrap.querySelector(`[name="${name}"]`);
+  const sync = () => {
+    const obj = {};
+    wrap.querySelectorAll(".kv-rows tr").forEach(tr => {
+      const k = tr.querySelector(".kv-k").value.trim();
+      if (!k) return;
+      const t = tr.querySelector(".kv-v").value.trim();
+      let v = tr.querySelector(".kv-v").value;
+      if (t === "true") v = true; else if (t === "false") v = false;
+      obj[k] = v;
+    });
+    hidden.value = JSON.stringify(obj);
+  };
+  wrap.addEventListener("input", sync);
+  wrap.addEventListener("click", e => {
+    if (e.target.closest(".kv-add")) { wrap.querySelector(".kv-rows").insertAdjacentHTML("beforeend", kvRowHtml()); sync(); return; }
+    const del = e.target.closest(".kv-del");
+    if (del) { del.closest("tr").remove(); sync(); }
+  });
+  sync();
+  return wrap;
+}
+
+function rulesEditor(name, value) {
+  const r = (value && typeof value === "object") ? value : {};
+  const boolSel = (id, v) => `<select id="${id}"><option value="true" ${v ? "selected" : ""}>是</option><option value="false" ${!v ? "selected" : ""}>否</option></select>`;
+  const d = r.length_drift || {};
+  const known = ["must_ask_back", "must_have_sequence", "no_price", "length_drift"];
+  const extra = Object.fromEntries(Object.entries(r).filter(([k]) => !known.includes(k)));
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `<input type="hidden" name="${name}">
+    <div class="form-grid">
+      <div class="form-row"><label>必须追问（回复里带问题）</label>${boolSel("jrAsk", !!r.must_ask_back)}</div>
+      <div class="form-row"><label>必须分步骤说明</label>${boolSel("jrSeq", !!r.must_have_sequence)}</div>
+      <div class="form-row"><label>禁止出现价格表述</label>${boolSel("jrNoPrice", !!r.no_price)}</div>
+      <div class="form-row"><label>字数漂移：概率 / 最短 / 最长</label>
+        <div class="form-grid"><input id="jrDriftRate" type="number" min="0" max="1" step="0.05" value="${d.rate ?? 0}"><input id="jrDriftMin" type="number" min="0" value="${d.min ?? 2}"><input id="jrDriftMax" type="number" min="1" value="${d.max ?? 60}"></div>
+        <div class="sub2">仅该评论类型允许部分回复突破人设句长；概率 0 = 关闭</div></div>
+    </div>
+    <div class="jr-extra" style="margin-top:8px;"></div>`;
+  const hidden = wrap.querySelector(`[name="${name}"]`);
+  const extraHost = wrap.querySelector(".jr-extra");
+  const mountExtra = () => extraHost.appendChild(kvEditor("__extra__", extra));
+  if (Object.keys(extra).length) mountExtra();
+  else {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn sm"; b.style.marginTop = "6px"; b.textContent = "＋ 添加自定义规则";
+    b.onclick = () => { b.remove(); mountExtra(); };
+    extraHost.appendChild(b);
+  }
+  const sync = () => {
+    const obj = {};
+    const g = id => wrap.querySelector("#" + id).value === "true";
+    if (g("jrAsk")) obj.must_ask_back = true;
+    if (g("jrSeq")) obj.must_have_sequence = true;
+    if (g("jrNoPrice")) obj.no_price = true;
+    const rate = Number(wrap.querySelector("#jrDriftRate").value || 0);
+    if (rate > 0) obj.length_drift = {rate, min: Number(wrap.querySelector("#jrDriftMin").value || 0), max: Number(wrap.querySelector("#jrDriftMax").value || 0)};
+    const exEl = extraHost.querySelector('[name="__extra__"]');
+    if (exEl && exEl.value) { try { Object.assign(obj, JSON.parse(exEl.value)); } catch { /* 留空 */ } }
+    hidden.value = JSON.stringify(obj);
+  };
+  wrap.addEventListener("input", sync);
+  wrap.addEventListener("change", sync);
+  sync();
+  return wrap;
+}
+
+function paramsEditor(name, value) {
+  const p = (value && typeof value === "object") ? value : {};
+  const len = p.length || {}, drift = p.length_drift || {}, emo = p.emotion || {}, delay = p.delay_minutes || {}, punct = p.punctuation || {};
+  const lineVal = a => Array.isArray(a) ? a.join("，") : "";
+  const linesVal = a => Array.isArray(a) ? a.join("\n") : "";
+  const catchVal = (p.catchphrases || []).map(c => (c.when ? c.when + "|" : "") + (c.text || "")).join("\n");
+  const n = (id, v, attrs = "") => `<input id="${id}" type="number" ${attrs} value="${v ?? ""}">`;
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `<input type="hidden" name="${name}">
+    <div class="form-grid">
+      <div class="form-row"><label>账号等级</label><select id="jpLevel">${["", "L1", "L2", "L3", "L4", "L5"].map(x => `<option value="${x}" ${x === (p.level || "") ? "selected" : ""}>${x || "未设置"}</option>`).join("")}</select></div>
+      <div class="form-row"><label>称呼观众</label><input id="jpAddress" value="${S.esc(p.address || "")}"></div>
+      <div class="form-row"><label>句长 最小/最大</label><div class="form-grid">${n("jpLenMin", len.min, "min=1")}${n("jpLenMax", len.max, "min=1")}</div></div>
+      <div class="form-row"><label>字数漂移 概率/最短/最长</label><div class="form-grid">${n("jpDriftRate", drift.rate ?? 0, "min=0 max=1 step=0.05")}${n("jpDriftMin", drift.min ?? 2, "min=0")}${n("jpDriftMax", drift.max ?? 60, "min=1")}</div></div>
+      <div class="form-row"><label>情绪 最小/最大 (0-10)</label><div class="form-grid">${n("jpEmoMin", emo.min, "min=0 max=10")}${n("jpEmoMax", emo.max, "min=0 max=10")}</div></div>
+      <div class="form-row"><label>回复率 (0-1)</label>${n("jpRate", p.reply_rate_default ?? 0.7, "min=0 max=1 step=0.05")}</div>
+      <div class="form-row"><label>延迟分钟 最小/最大</label><div class="form-grid">${n("jpDelayMin", delay.min ?? 60, "min=0")}${n("jpDelayMax", delay.max ?? 180, "min=0")}</div></div>
+      <div class="form-row"><label>可用语气词（逗号分隔）</label><input id="jpFillers" value="${S.esc(lineVal(p.filler_whitelist))}"></div>
+      <div class="form-row"><label>可覆盖品类（逗号分隔）</label><input id="jpCategories" value="${S.esc(lineVal(p.allowed_categories))}"></div>
+      <div class="form-row"><label>允许标点（逗号分隔）</label><input id="jpPunctAllow" value="${S.esc(lineVal(punct.allow))}"></div>
+      <div class="form-row"><label>禁止标点（逗号分隔）</label><input id="jpPunctDeny" value="${S.esc(lineVal(punct.deny))}"></div>
+    </div>
+    <div class="form-row" style="margin-top:8px;"><label>绝不做什么（每行一条）</label><textarea id="jpNever" rows="2">${S.esc(linesVal(p.never))}</textarea></div>
+    <div class="form-row"><label>口头禅（每行一条，可写 条件|话术）</label><textarea id="jpCatch" rows="2">${S.esc(catchVal)}</textarea></div>`;
+  const hidden = wrap.querySelector(`[name="${name}"]`);
+  const int = el => { const x = Number(el.value); return Number.isInteger(x) ? x : null; };
+  const list = el => el.value.split(/[，,\n]/).map(x => x.trim()).filter(Boolean);
+  const sync = () => {
+    const obj = {};
+    const lv = wrap.querySelector("#jpLevel").value; if (lv) obj.level = lv;
+    obj.address = wrap.querySelector("#jpAddress").value.trim();
+    obj.length = {min: int(wrap.querySelector("#jpLenMin")), max: int(wrap.querySelector("#jpLenMax"))};
+    obj.length_drift = {rate: Number(wrap.querySelector("#jpDriftRate").value || 0), min: int(wrap.querySelector("#jpDriftMin")), max: int(wrap.querySelector("#jpDriftMax"))};
+    obj.emotion = {min: int(wrap.querySelector("#jpEmoMin")), max: int(wrap.querySelector("#jpEmoMax"))};
+    obj.delay_minutes = {min: int(wrap.querySelector("#jpDelayMin")), max: int(wrap.querySelector("#jpDelayMax"))};
+    obj.reply_rate_default = Number(wrap.querySelector("#jpRate").value || 0);
+    obj.filler_whitelist = list(wrap.querySelector("#jpFillers"));
+    obj.allowed_categories = list(wrap.querySelector("#jpCategories"));
+    obj.punctuation = {allow: list(wrap.querySelector("#jpPunctAllow")), deny: list(wrap.querySelector("#jpPunctDeny"))};
+    obj.never = list(wrap.querySelector("#jpNever"));
+    obj.catchphrases = wrap.querySelector("#jpCatch").value.split("\n").map(x => x.trim()).filter(Boolean)
+      .map(line => { const [when, ...rest] = line.split("|"); const text = rest.join("|").trim(); return text ? {when: when.trim(), text} : null; }).filter(Boolean);
+    hidden.value = JSON.stringify(obj);
+  };
+  wrap.addEventListener("input", sync);
+  sync();
+  return wrap;
+}
+
+// ---------- 新增/编辑弹窗 ----------
+function buildForm(row, mode) {
+  row = row || {};
+  const el = document.createElement("div");
+  const autoDefaults = TABLE === "category_pain_points" && mode === "add"
+    ? new Set(["pain_point_id", "trigger_words", "priority", "state", "created_ts", "updated_ts"])
+    : (TABLE === "model_pain_point_matches" && mode === "add"
+      ? new Set(["match_source", "state", "created_ts", "updated_ts"])
+      : new Set());
+  cols.filter(c => !c.auto && !autoDefaults.has(c.name)).forEach(c => {
+    const val = row[c.name];
+    let inputHtml = "", editorNode = null;
+    const common = `name="${c.name}" style="width:100%;"`;
+    if (TABLE === "model_pain_point_matches" && c.name === "model_id") {
+      inputHtml = `<select ${common}><option value="">请选择产品</option>${Object.entries(modelNames)
+        .map(([id, name]) => `<option value="${S.esc(id)}" ${String(val ?? "") === id ? "selected" : ""}>${S.esc(name)}</option>`).join("")}</select>`;
+    } else if (TABLE === "model_pain_point_matches" && c.name === "pain_point_id") {
+      inputHtml = `<select ${common}><option value="">请选择痛点</option>${Object.entries(painPointNames)
+        .map(([id, name]) => `<option value="${S.esc(id)}" ${String(val ?? "") === id ? "selected" : ""}>${S.esc(name)}</option>`).join("")}</select>`;
+    } else if (TABLE === "model_pain_point_matches" && c.name === "matched_params") {
+      const existing = parseMaybeJson(val);
+      const names = Array.isArray(existing) ? existing.map(item => item.param_name || "").filter(Boolean).join("、") : "";
+      inputHtml = `<textarea name="matched_params_display" data-original="${S.esc(JSON.stringify(existing || []))}" rows="3" placeholder="选填，例如：机身高度、越障高度">${S.esc(names)}</textarea>`;
+    } else if (c.enum) {
+      inputHtml = `<select ${common}>
+        <option value="">(空)</option>
+        ${c.enum.map(o => `<option value="${S.esc(o)}" ${String(val ?? "") === o ? "selected" : ""}>${S.esc(o)}</option>`).join("")}
+      </select>`;
+    } else if (TABLE === "model_facts" && c.name === "specs") {
+      inputHtml = `<input type="hidden" ${common}>${specEditor(val)}`;
+    } else if (c.type === "json" && (JSON_KIND[TABLE] || {})[c.name]) {
+      const parsed = parseMaybeJson(val);
+      const kind = (JSON_KIND[TABLE] || {})[c.name];
+      if (kind === "tags") editorNode = tagsEditor(c.name, parsed);
+      else if (kind === "kv") editorNode = kvEditor(c.name, parsed);
+      else if (kind === "rules") editorNode = rulesEditor(c.name, parsed);
+      else if (kind === "params") editorNode = paramsEditor(c.name, parsed);
+    } else if (c.type === "json") {
+      const j = val === null || val === undefined ? "" :
+        (typeof val === "object" ? JSON.stringify(val, null, 2) : String(val));
+      inputHtml = `<textarea ${common} rows="4" placeholder='JSON,如 ["a","b"] 或 {"k":1}'>${S.esc(j)}</textarea>`;
+    } else if (c.type === "text") {
+      inputHtml = `<textarea ${common} rows="3">${S.esc(val ?? "")}</textarea>`;
+    } else if (c.type === "date") {
+      inputHtml = `<input type="date" ${common} value="${S.esc(val ?? "")}">`;
+    } else if (["int", "bigint", "tinyint", "smallint"].includes(c.type)) {
+      inputHtml = `<input type="number" ${common} value="${S.esc(val ?? "")}">`;
+    } else {
+      inputHtml = `<input type="text" ${common} value="${S.esc(val ?? "")}">`;
+    }
+    const item = document.createElement("div");
+    item.className = "kvlist";
+    item.style.marginBottom = "10px";
+    const label = TABLE === "model_pain_point_matches" && c.name === "model_id" ? "产品名称"
+      : TABLE === "model_pain_point_matches" && c.name === "pain_point_id" ? "痛点名称"
+      : TABLE === "model_pain_point_matches" && c.name === "matched_params" ? "匹配参数（选填）" : c.label;
+    const req = (c.nullable || (TABLE === "model_pain_point_matches" && c.name === "matched_params")) ? "" : ' <b style="color:var(--red);">*</b>';
+    item.innerHTML = `<div class="k" style="font-size:12.5px;" title="${S.esc(c.comment)}">${S.esc(label)}${req}</div><div class="v"></div>`;
+    const host = item.querySelector(".v");
+    if (editorNode) host.appendChild(editorNode); else host.innerHTML = inputHtml;
+    el.appendChild(item);
+  });
+  return el;
+}
+
+function collectForm(body) {
+  const data = {};
+  for (const c of cols) {
+    if (c.auto) continue;
+    if (c.pk && body.dataset.mode === "edit") continue; // 主键不可改
+    const el = body.querySelector(`[name="${c.name}"]`);
+    if (TABLE === "model_pain_point_matches" && c.name === "matched_params") {
+      const display = body.querySelector('[name="matched_params_display"]');
+      const names = (display?.value || "").split(/[、,，;；\n]+/).map(x => x.trim()).filter(Boolean);
+      let original = parseMaybeJson(display?.dataset.original || "[]");
+      original = Array.isArray(original) ? original : [];
+      data[c.name] = JSON.stringify(names.map(name =>
+        original.find(item => item.param_name === name) || {param_name: name, model_specs: []}));
+      continue;
+    }
+    if (!el) continue;
+    if (TABLE === "model_facts" && c.name === "specs") {
+      const specs = {};
+      body.querySelectorAll(".spec-row").forEach(tr => {
+        const key = tr.querySelector(".spec-key").value.trim();
+        const rawValue = tr.querySelector(".spec-value").value.trim();
+        if (!key && !rawValue) return;
+        if (!key || !rawValue) throw new Error("每一行核心参数都需要填写英文参数键和参数值");
+        const unit = tr.querySelector(".spec-unit").value.trim();
+        const condition = tr.querySelector(".spec-condition").value.trim();
+        let value = /^-?\d+(\.\d+)?$/.test(rawValue) ? Number(rawValue) : rawValue;
+        if (key === "programs" && rawValue.includes("、")) value = rawValue.split("、").map(x => x.trim()).filter(Boolean);
+        specs[key] = {value, ...(unit ? {unit} : {}), ...(condition ? {condition} : {})};
+      });
+      data[c.name] = JSON.stringify(specs);
+      continue;
+    }
+    // guardrails 的触发模式历史数据允许为空字符串，编辑时不能转换成 NULL。
+    data[c.name] = (TABLE === "guardrails" && c.name === "trigger_pattern") ? el.value : (el.value === "" ? null : el.value);
+  }
+  return data;
+}
+
+window.editRow = btn => {
+  const pkVal = btn.closest("tr").dataset.pk;
+  S.api(`/kb/${TABLE}/row/${encodeURIComponent(pkVal)}`).then(d => {
+    openForm(d.row, "edit");
+  }).catch(e => S.toast(e.message, "err"));
+};
+
+S.$("addBtn") && (S.$("addBtn").onclick = () => openForm(null, "add"));
+
+function openForm(row, mode) {
+  const body = buildForm(row, mode);
+  body.dataset.mode = mode;
+  S.modal({
+    title: (mode === "add" ? "➕ 新增" : "✏️ 编辑") + " · " + TABLE,
+    body, wide: true, okText: "保存",
+    onOk: async () => {
+      const data = collectForm(body);
+      if (mode === "add") {
+        await S.api(`/kb/${TABLE}`, { method: "POST", body: data });
+        S.toast("已新增", "ok");
+      } else {
+        await S.api(`/kb/${TABLE}/${encodeURIComponent(row[pk])}/update`,
+                    { method: "POST", body: data });
+        S.toast("已保存", "ok");
+      }
+      load();
+    },
+  });
+}
+
+async function suggestMappings() {
+  const category = prompt("输入要生成映射的产品类目，例如：扫地机器人");
+  if (!category || !category.trim()) return;
+  const btn = S.$("aiSuggestBtn");
+  btn.disabled = true; btn.textContent = "生成中…";
+  try {
+    const result = await S.api("/kb/pain-point-mappings/suggest", {
+      method: "POST", body: { category: category.trim() }
+    });
+    S.toast(`已生成 ${result.inserted} 条待审核映射`, "ok");
+    S.$("fState").value = "pending";
+    page = 1;
+    load();
+  } catch (e) {
+    S.toast(e.message, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "✨ AI 生成待审核映射";
+  }
+}
+
+window.confirmRow = async btn => {
+  const pkVal = btn.closest("tr").dataset.pk;
+  if (!confirm(`确认将 ${TABLE} 中主键 = "${pkVal}" 的记录标记为可用（usable）？\n确认后将刷新核验日期并把可信等级升为 mid。`)) return;
+  try {
+    await S.api(`/kb/${TABLE}/${encodeURIComponent(pkVal)}/confirm`, { method: "POST" });
+    S.toast("已确认可用", "ok");
+    load();
+  } catch (e) { S.toast(e.message, "err"); }
+};
+
+window.delRow = async btn => {
+  const pkVal = btn.closest("tr").dataset.pk;
+  if (!confirm(`确认删除 ${TABLE} 中主键 = "${pkVal}" 的记录?`)) return;
+  try {
+    await S.api(`/kb/${TABLE}/${encodeURIComponent(pkVal)}/delete`, { method: "POST" });
+    S.toast("已删除", "ok");
+    load();
+  } catch (e) { S.toast(e.message, "err"); }
+};
+
+let searchTimer = null;
+S.$("fQ").oninput = () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { page = 1; load(); }, 350);
+};
+S.$("fSize").onchange = () => { size = Number(S.$("fSize").value); page = 1; load(); };
+if (S.$("fState")) S.$("fState").onchange = () => { page = 1; load(); };
+</script>
+{% endblock %}

@@ -4,6 +4,89 @@ const S = {};
 S.$ = (id, root) => (root || document).getElementById(id);
 S.$$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
+// ---------- 统一图标 ----------
+// 旧页面以 emoji 编写。这里在界面组件范围内统一转换为轻量线性 SVG，避免外部图标库依赖，
+// 也让异步加载的列表、弹窗和空状态保持一致的图标语言；不处理评论、标题等业务数据文本。
+const UI_ICON_PATHS = {
+  shield: '<path d="M12 3 5 6v5c0 4.6 2.9 8.8 7 10 4.1-1.2 7-5.4 7-10V6l-7-3Z"/><path d="m9.5 12 1.7 1.7 3.6-3.6"/>',
+  chart: '<path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 4-4 3 2 5-6"/>',
+  message: '<path d="M20 11.5a7.5 7.5 0 0 1-8 7.5 8.4 8.4 0 0 1-3.5-.8L4 20l1.3-4A7.2 7.2 0 0 1 4 11.5 7.5 7.5 0 0 1 12 4a7.5 7.5 0 0 1 8 7.5Z"/><path d="M8.5 12h.01M12 12h.01M15.5 12h.01"/>',
+  video: '<rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2"/><path d="m8 9 4 3-4 3Z"/>',
+  alert: '<path d="M10.3 4.3 3.4 17a2 2 0 0 0 1.8 3h13.6a2 2 0 0 0 1.8-3L13.7 4.3a1.95 1.95 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/>',
+  users: '<path d="M16 20v-1.5A4.5 4.5 0 0 0 11.5 14h-4A4.5 4.5 0 0 0 3 18.5V20"/><circle cx="9.5" cy="7.5" r="3.5"/><path d="M17 4.5a3.5 3.5 0 0 1 0 6.7M21 20v-1.5a4.5 4.5 0 0 0-3-4.25"/>',
+  mobile: '<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/>',
+  bot: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M8 12h.01M16 12h.01M9 16h6"/>',
+  brain: '<path d="M9 5.5A3.5 3.5 0 0 0 3 8a3.4 3.4 0 0 0 1 2.4A3.6 3.6 0 0 0 5 17a3.6 3.6 0 0 0 5 1.1A3.7 3.7 0 0 0 12 20V4a3.7 3.7 0 0 0-3 1.5ZM15 5.5A3.5 3.5 0 0 1 21 8a3.4 3.4 0 0 1-1 2.4A3.6 3.6 0 0 1 19 17a3.6 3.6 0 0 1-5 1.1A3.7 3.7 0 0 1 12 20V4a3.7 3.7 0 0 1 3 1.5Z"/>',
+  compass: '<circle cx="12" cy="12" r="8"/><path d="m15 9-2 4-4 2 2-4 4-2Z"/>',
+  list: '<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>',
+  building: '<rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15h.01"/>',
+  funnel: '<path d="M3 5h18l-7 8v5l-4 2v-7L3 5Z"/>',
+  file: '<path d="M7 3h7l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+  handshake: '<path d="m8 11 3 3a2 2 0 0 0 2.8 0l3.7-3.7"/><path d="m3 10 4-4 3 2 2-2 3 1 2-1 4 4-4 6-2.4-1.7M3 10l4 6 2-1.5"/>',
+  tag: '<path d="M4 4h7l8 8-7 7-8-8V4Z"/><circle cx="8" cy="8" r="1"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14-4L4 9M4 4v5h5M4 13a8 8 0 0 0 14 4l2-2M20 20v-5h-5"/>',
+  arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  check: '<path d="m5 12 4.2 4L19 6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M9 7l1-3h4l1 3M6 7l1 14h10l1-14"/>',
+  link: '<path d="M10 13a4 4 0 0 0 5.7.1l3-3a4 4 0 0 0-5.7-5.7l-1.7 1.7"/><path d="M14 11a4 4 0 0 0-5.7-.1l-3 3A4 4 0 0 0 11 19.6l1.7-1.7"/>',
+  light: '<circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  star: '<path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.8-5.4 2.8 1-6.1-4.4-4.3 6.1-.9L12 3Z"/>',
+  calendar: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/>',
+  eye: '<path d="M3 12s3-6 9-6 9 6 9 6-3 6-9 6-9-6-9-6Z"/><circle cx="12" cy="12" r="2.5"/>',
+};
+const UI_EMOJI_ICONS = {
+  "🛡":"shield", "🛡️":"shield", "📈":"chart", "📊":"chart", "💬":"message", "🎬":"video", "📺":"video", "🚨":"alert", "🔔":"alert", "🔥":"alert", "👥":"users", "👤":"users", "👪":"users", "📱":"mobile", "🤖":"bot", "🎭":"bot", "🧠":"brain", "🧭":"compass", "📋":"list", "🏢":"building", "🔻":"funnel", "📨":"message", "📑":"file", "📒":"file", "📌":"tag", "🤝":"handshake", "🏷":"tag", "🔍":"search", "🔎":"search", "🔄":"refresh", "←":"back", "→":"arrow", "✓":"check", "➕":"plus", "🗑":"trash", "🔗":"link", "💡":"light", "✦":"star", "🎉":"star", "⭐":"star", "🚀":"arrow", "🛒":"tag", "📥":"arrow", "📷":"video", "📝":"file", "📞":"mobile", "💾":"file", "📭":"file", "🧩":"tag", "🔓":"shield", "👁":"eye", "🙈":"eye", "👍":"check", "👎":"back", "👉":"arrow", "🍃":"light", "🧊":"alert", "◉":"chart", "◷":"calendar", "⌁":"shield"
+};
+S.icon = (name, label = "") => `<svg class="ui-icon" aria-hidden="${label ? "false" : "true"}"${label ? ` aria-label="${S.esc(label)}"` : ""} viewBox="0 0 24 24">${UI_ICON_PATHS[name] || UI_ICON_PATHS.file}</svg>`;
+const UI_ICON_PATTERN = new RegExp(Object.keys(UI_EMOJI_ICONS).sort((a, b) => b.length - a.length).map(v => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gu");
+const UI_ICON_SCOPE = ".topbar,.side,.page-head,.card-title,.btn,.nav-link,.empty,.stat-card,.module-card,.entity-card,.login-page,.deal-hero,.deal-kpi,.deal-progress,.modal-head";
+function normalizeUiIcons(root = document.body) {
+  if (!root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode(node) {
+    const parent = node.parentElement;
+    if (!parent || parent.closest("script,style,textarea,option,[data-ui-icon]")) return NodeFilter.FILTER_REJECT;
+    if (!parent.closest(UI_ICON_SCOPE)) return NodeFilter.FILTER_REJECT;
+    UI_ICON_PATTERN.lastIndex = 0;
+    return UI_ICON_PATTERN.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+  }});
+  const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(node => {
+    UI_ICON_PATTERN.lastIndex = 0;
+    const parts = node.nodeValue.split(UI_ICON_PATTERN);
+    const found = node.nodeValue.match(UI_ICON_PATTERN) || [];
+    if (!found.length) return;
+    const fragment = document.createDocumentFragment();
+    parts.forEach((part, index) => {
+      if (part) fragment.appendChild(document.createTextNode(part));
+      const emoji = found[index];
+      if (emoji) { const holder = document.createElement("span"); holder.dataset.uiIcon = UI_EMOJI_ICONS[emoji]; holder.innerHTML = S.icon(UI_EMOJI_ICONS[emoji]); fragment.appendChild(holder); }
+    });
+    node.replaceWith(fragment);
+  });
+}
+document.addEventListener("DOMContentLoaded", () => {
+  const setTheme = theme => {
+    const isDark = theme === "dark";
+    document.body.classList.toggle("theme-night", isDark);
+    document.querySelectorAll("[data-theme-toggle]").forEach(button => {
+      button.setAttribute("aria-pressed", String(button.dataset.themeToggle === theme));
+    });
+    try { localStorage.setItem("scrm.theme", theme); } catch (_) {}
+  };
+  const savedTheme = (() => { try { return localStorage.getItem("scrm.theme"); } catch (_) { return null; } })();
+  setTheme(savedTheme === "light" ? "light" : "dark");
+  document.querySelectorAll("[data-theme-toggle]").forEach(button => {
+    button.addEventListener("click", () => setTheme(button.dataset.themeToggle));
+  });
+  normalizeUiIcons();
+  new MutationObserver(records => records.forEach(record => record.addedNodes.forEach(node => {
+    if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) normalizeUiIcons(node);
+  }))).observe(document.body, { childList: true, subtree: true });
+});
+
 S.esc = s => (s == null ? "" : String(s))
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");

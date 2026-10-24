@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""评论 AI 分析守护进程
+"""评论决策守护进程
 - 事件驱动式快扫:每 ANALYZE_INTERVAL 秒轮询所有评论表 analyzed=0 的记录(小批量)
 - 每 ANALYZE_FULL_SWEEP 秒做一次全量补扫,清完快扫批次外的遗留
 - 自动分析只处理最近 ANALYZE_MAX_AGE_DAYS 天内的评论(手动分析不受限)
-- 调 DeepSeek 一次完成负面判断 + 购买意向判断 + 生成 10-50 字回复
-- 回写 analyzed/negative_alert/purchase_intent/reply_suggestion
+- 由独立 reply-service 一次完成分析、路由与回复决策
+- 回写 analyzed/negative_alert/purchase_intent/comment_type/reply_suggestion
 """
 import json
 import time
@@ -13,14 +13,23 @@ import requests
 from pymysql.err import OperationalError
 
 from config import (
-    DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL,
     ANALYZE_INTERVAL, ANALYZE_BATCH, ANALYZE_FULL_SWEEP, ANALYZE_MAX_AGE_DAYS,
-    ANALYZE_MAX_TOKENS, ANALYZE_TEMPERATURE,
     COMMENT_TABLES, FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_CHAT_ID, FEISHU_ALERT_ENABLED,
 )
-from db import get_conn
+from db import get_conn, mark_self_replies_handled
+from reply_context import resolve_comment_context
+from reply_service_client import evaluate_comment
 
 logger = logging.getLogger("analyzer")
+
+# 高级负向类型:识别到即强制标注负面预警/高级负面，并立即发送飞书提醒。
+# 产品差评仅需人工审核，属于常规负面反馈，不升级为高级负面。
+ADVANCED_NEGATIVE_TYPES = {
+    "攻击引战", "无关灌水", "恰饭质疑", "专业质疑",
+    "恶意质疑", "导购广告", "竞品引流",
+}
+
+ANALYSIS_CLAIM_TIMEOUT_SECONDS = 300
 
 # 各评论表的业务时间列(create_time 多为秒;add_ts 部分平台为毫秒,过滤时统一归一化)
 _TABLE_TIME_COL = {
@@ -35,16 +44,6 @@ _TABLE_TIME_COL = {
     "reddit_comment": "add_ts",
 }
 
-SYSTEM_PROMPT = """你是一位互联网冲浪选手,同时具备家电测评专家的专业性,语气温和礼貌。
-根据用户给出的评论,做三件事:
-1. 判断 is_negative:评论含抱怨、批评、不满、质量问题、负面情绪则为 true,否则 false。
-2. 判断 has_purchase_intent:评论表达购买意向(如求推荐、想买、求链接、比价、咨询选购、问型号配置等)则为 true,否则 false。
-3. 生成 10-50 字回复 reply:
-   - 若 has_purchase_intent=true:给出引导性回复,温和专业地推荐合适家电型号/品类、给出选购建议、促进购买决策,体现家电测评专家的专业性,可适当带网络用语。
-   - 否则:常规回复,家电测评专家口吻 + 温和礼貌 + 互联网冲浪选手接地气,可适当用网络用语但不失专业。
-严格只返回 JSON,格式:{"is_negative": true/false, "has_purchase_intent": true/false, "reply": "回复内容"}"""
-
-
 class _Status:
     def __init__(self):
         self.running = False
@@ -57,41 +56,6 @@ class _Status:
 
 
 status = _Status()
-
-
-def call_deepseek(content):
-    """调 DeepSeek 分析单条评论,返回 (is_negative:bool, reply:str) 或 None"""
-    url = f"{DEEPSEEK_BASE_URL}/chat/completions"
-    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-    payload = {
-        "model": DEEPSEEK_MODEL,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"评论:{content}"},
-        ],
-        "max_tokens": ANALYZE_MAX_TOKENS,
-        "temperature": ANALYZE_TEMPERATURE,
-        "response_format": {"type": "json_object"},
-    }
-    try:
-        r = requests.post(url, headers=headers, json=payload, timeout=60)
-        r.raise_for_status()
-        data = r.json()
-        text = data["choices"][0]["message"]["content"].strip()
-        # 容错:提取首个 JSON 对象(模型可能包裹 ```json)
-        if "{" in text:
-            text = text[text.find("{"):text.rfind("}") + 1]
-        obj = json.loads(text)
-        is_neg = bool(obj.get("is_negative", False))
-        has_intent = bool(obj.get("has_purchase_intent", False))
-        reply = (obj.get("reply") or "").strip()
-        if not reply:
-            return None
-        return is_neg, has_intent, reply[:300]
-    except Exception as e:
-        logger.warning("DeepSeek 调用失败: %s", e)
-        status.last_error = f"{time.strftime('%H:%M:%S')} {e}"[:200]
-        return None
 
 
 _NO_NICKNAME_TABLES = set()  # 记录不含 nickname 列的评论表
@@ -170,6 +134,52 @@ def _feishu_token():
     return _FEISHU_TOKEN["value"]
 
 
+def send_feishu_high_alert(alert):
+    """高级负向评论识别到后立即单条推送飞书提醒"""
+    if not FEISHU_ALERT_ENABLED:
+        return
+    if not (FEISHU_APP_ID and FEISHU_APP_SECRET and FEISHU_CHAT_ID):
+        return
+    # Alert callers include both batch analysis and manual regeneration.  Read
+    # the persisted body again so a mismatched context-field name can never
+    # turn a valid alert into an empty Feishu message.
+    comment_text = _alert_comment_text(alert)
+    tag = "🚨🚨 高级负向评论预警"
+    text = "\n".join([
+        tag,
+        f"类型:{alert.get('type') or '未知'}",
+        f"【{alert['table']}#{alert['id']}】{alert['nickname'] or '匿名'}",
+        f"评论:{comment_text[:150]}",
+    ])
+    logger.info("发送高级负向飞书预警: %s#%s，正文 %s 字", alert["table"], alert["id"], len(comment_text))
+    try:
+        data = _post_feishu_text(text)
+        if data.get("code") != 0:
+            logger.warning("高级负向飞书提醒发送失败: %s", data)
+        else:
+            logger.info("高级负向飞书提醒已发送: %s#%s", alert["table"], alert["id"])
+    except Exception as e:
+        logger.warning("高级负向飞书提醒发送异常: %s", e)
+
+
+def _alert_comment_text(alert):
+    """Return the authoritative stored comment body for an alert when possible."""
+    table = alert.get("table")
+    rid = alert.get("id")
+    if table in COMMENT_TABLES:
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f"SELECT CAST(content AS CHAR) AS content FROM `{table}` WHERE id=%s", (int(rid),))
+                    row = cur.fetchone() or {}
+            stored = str(row.get("content") or "").strip()
+            if stored:
+                return stored
+        except Exception as exc:
+            logger.warning("读取飞书预警评论正文失败: %s", exc)
+    return str(alert.get("content") or "").strip()
+
+
 def _post_feishu_text(text):
     token = _feishu_token()
     r = requests.post(
@@ -227,19 +237,41 @@ def send_feishu_alert(alerts):
         logger.warning("飞书预警发送异常: %s", e)
 
 
-def mark_analyzed(table, rid, is_negative, has_intent, reply, failed=False):
+def mark_analyzed(table, rid, is_negative, has_intent, reply, comment_type=None, failed=False, high_negative=None, human_review=False):
     if failed:
-        sql = f"UPDATE `{table}` SET `analyzed`=1, `negative_alert`=0, `purchase_intent`=0, `reply_suggestion`=%s WHERE `id`=%s"
+        sql = f"UPDATE `{table}` SET `analyzed`=1, `analysis_claimed_ts`=NULL, `negative_alert`=0, `purchase_intent`=0, `comment_type`=NULL, `human_review`=0, `reply_suggestion`=IF(IFNULL(`reply_manual_override`,0)=1, `reply_suggestion`, %s) WHERE `id`=%s"
         params = ("⚠ 分析失败,可重置 analyzed=0 后重试", rid)
     else:
         neg = 1 if is_negative else 0
         intent = 1 if has_intent else 0
-        sql = f"UPDATE `{table}` SET `analyzed`=1, `negative_alert`=%s, `purchase_intent`=%s, `reply_suggestion`=%s WHERE `id`=%s"
-        params = (neg, intent, reply, rid)
+        high = "" if high_negative is None else ", `high_negative`=%s"
+        sql = (f"UPDATE `{table}` SET `analyzed`=1, `analysis_claimed_ts`=NULL, `negative_alert`=%s, `purchase_intent`=%s, "
+               f"`comment_type`=%s, `human_review`=%s{high}, `reply_suggestion`=IF(IFNULL(`reply_manual_override`,0)=1, `reply_suggestion`, %s) WHERE `id`=%s")
+        if high:
+            params = (neg, intent, str(comment_type or "")[:64] or None, 1 if human_review else 0,
+                      1 if high_negative else 0, reply, rid)
+        else:
+            params = (neg, intent, str(comment_type or "")[:64] or None, 1 if human_review else 0, reply, rid)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
         conn.commit()
+
+
+def claim_comment(table, rid, *, now=None):
+    """原子领取一条待分析评论，避免多个服务实例重复分析、重复告警。"""
+    claimed_at = int(time.time() if now is None else now)
+    expired_at = claimed_at - ANALYSIS_CLAIM_TIMEOUT_SECONDS
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            affected = cur.execute(
+                f"UPDATE `{table}` SET `analysis_claimed_ts`=%s "
+                f"WHERE `id`=%s AND `analyzed`=0 AND IFNULL(`handled`,0)=0 "
+                f"AND (`analysis_claimed_ts` IS NULL OR `analysis_claimed_ts`<%s)",
+                (claimed_at, rid, expired_at),
+            )
+        conn.commit()
+    return affected == 1
 
 
 def scan_all(batch=None):
@@ -261,6 +293,12 @@ def scan_all(batch=None):
         status.processing = True
         from itertools import chain
         for row in chain((first,), rows):
+            try:
+                if not claim_comment(table, row["id"]):
+                    continue
+            except Exception as exc:
+                logger.warning("领取 %s#%s 分析任务失败: %s", table, row["id"], exc)
+                continue
             status.last_table = f"{table}#{row['id']}"
             content = (row.get("content") or "")[:500]
             if not content.strip():
@@ -268,16 +306,41 @@ def scan_all(batch=None):
                 status.session_analyzed += 1
                 processed += 1
                 continue
-            res = call_deepseek(content)
-            if res is None:
+            context = resolve_comment_context(table, row["id"])
+            if not context:
                 mark_analyzed(table, row["id"], False, False, "", failed=True)
                 status.session_failed += 1
+                processed += 1
+                continue
+            generated = evaluate_comment(context, "batch")
+            if not generated.get("available"):
+                mark_analyzed(table, row["id"], False, False, "", failed=True)
+                status.session_failed += 1
+                status.last_error = f"{time.strftime('%H:%M:%S')} {generated.get('error', '回复服务不可用')}"[:200]
             else:
-                is_neg, has_intent, reply = res
-                mark_analyzed(table, row["id"], is_neg, has_intent, reply)
+                analysis = generated["analysis"]
+                is_neg = analysis["is_negative"]
+                has_intent = analysis["has_purchase_intent"]
+                ctype = analysis.get("comment_type") or ""
+                # 高级负向类型:无条件标注负向 + 高级负向,并立即推送飞书
+                high_neg = ctype in ADVANCED_NEGATIVE_TYPES
+                if high_neg:
+                    is_neg = True
+                reply = (generated.get("reply") or "")[:300] if generated.get("action") == "reply" else ""
+                mark_analyzed(table, row["id"], is_neg, has_intent, reply, ctype,
+                              high_negative=high_neg, human_review=generated.get("action") == "human_review")
                 status.session_analyzed += 1
-                logger.info("分析 %s#%s neg=%s intent=%s reply=%s", table, row["id"], is_neg, has_intent, reply[:40])
-                if is_neg:
+                logger.info("分析 %s#%s neg=%s high=%s type=%s intent=%s reply=%s",
+                            table, row["id"], is_neg, high_neg, ctype, has_intent, reply[:40])
+                if high_neg:
+                    send_feishu_high_alert({
+                        "table": table,
+                        "id": row["id"],
+                        "nickname": (row.get("nickname") or "").strip(),
+                        "content": content,
+                        "type": ctype,
+                    })
+                elif is_neg:
                     alerts.append({
                         "table": table,
                         "id": row["id"],
@@ -303,6 +366,9 @@ def analyzer_loop():
     next_full_sweep = time.time() + ANALYZE_FULL_SWEEP
     while True:
         try:
+            handled_self_replies = mark_self_replies_handled()
+            if handled_self_replies:
+                logger.info("已自动标记 %s 条本人回复为已处理", handled_self_replies)
             if time.time() >= next_full_sweep:
                 scan_all(batch=0)  # 全量补扫,一轮清完所有遗留
                 next_full_sweep = time.time() + ANALYZE_FULL_SWEEP

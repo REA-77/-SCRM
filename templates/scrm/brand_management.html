@@ -1,0 +1,15 @@
+{% extends "scrm/base.html" %}
+{% block title %}品牌管理{% endblock %}
+{% block content %}
+<div class="page-head"><div><h2>🏷️ 品牌管理</h2><div class="sub">维护品牌名称与品牌别名</div></div><button class="btn primary" id="addBrand">➕ 新增品牌</button></div>
+<div class="filter-bar"><input id="brandSearch" placeholder="搜索品牌名称或别名"><button class="btn primary" id="searchBrand">🔍 搜索</button><button class="btn" id="resetBrand">重置</button></div>
+<div class="card" style="padding:0"><div class="table-wrap"><table class="data"><thead><tr><th>品牌名称</th><th>品牌别名</th><th>更新时间</th><th style="width:100px">操作</th></tr></thead><tbody id="tbody"><tr><td colspan="4" class="loading">加载中…</td></tr></tbody></table></div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+let rows=[];
+async function load(){const q=S.$("brandSearch").value.trim();const d=await S.api("/brand-management"+(q?`?q=${encodeURIComponent(q)}`:""));rows=d.rows;S.$("tbody").innerHTML=rows.map(r=>`<tr><td>${S.esc(r.name)}</td><td>${S.esc(r.alias||"—")}</td><td>${S.fmtTs(r.updated_ts)}</td><td><button class="btn sm" data-edit="${r.id}">编辑</button> <button class="btn sm danger" data-delete="${r.id}">删除</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">暂无品牌</td></tr>';S.$$("[data-edit]").forEach(b=>b.onclick=()=>openBrand(rows.find(r=>r.id==b.dataset.edit)));S.$$("[data-delete]").forEach(b=>b.onclick=()=>S.confirm("确认删除该品牌?",async()=>{await S.api("/brand-management/delete",{method:"POST",body:{id:Number(b.dataset.delete)}});S.toast("品牌已删除","ok");load();}));}
+function openBrand(row={}){S.modal({title:row.id?"编辑品牌":"新增品牌",body:`<div class="form-row"><label>品牌名称</label><input id="bName" value="${S.esc(row.name||"")}"></div><div class="form-row"><label>品牌别名</label><textarea id="bAlias" placeholder="多个别名用逗号分隔">${S.esc(row.alias||"")}</textarea></div>`,okText:"保存",onOk:async body=>{const name=body.querySelector("#bName").value.trim();if(!name){S.toast("品牌名称必填","err");return false;}await S.api("/brand-management/save",{method:"POST",body:{id:row.id,name,alias:body.querySelector("#bAlias").value.trim()}});S.toast("品牌已保存","ok");load();}})}
+S.$("addBrand").onclick=()=>openBrand();S.$("searchBrand").onclick=load;S.$("resetBrand").onclick=()=>{S.$("brandSearch").value="";load();};S.$("brandSearch").addEventListener("keydown",e=>{if(e.key==="Enter")load();});load();
+</script>
+{% endblock %}

@@ -7,6 +7,8 @@
     <div class="sub">九平台视频 / 笔记 / 帖子聚合展示,点击标题直达原内容</div>
   </div>
   <div class="actions">
+    <button class="btn" id="editProductsBtn">✏️ 编辑产品名称</button>
+    <button class="btn" id="reviewProductsBtn">✓ 审核所选产品名称</button>
     <button class="btn" id="exportBtn">⬇ 导出当前结果 CSV</button>
   </div>
 </div>
@@ -40,6 +42,11 @@
     <option value="30">近 30 天发布</option>
     <option value="90">近 90 天发布</option>
   </select>
+  <select id="fKpiStatus" aria-label="视频达标状态">
+    <option value="">全部达标状态</option>
+    <option value="reached">已达标</option>
+    <option value="unreached">未达标</option>
+  </select>
   <button class="btn primary" id="searchBtn">🔍 筛选</button>
   <button class="btn" id="resetBtn">重置</button>
 </div>
@@ -49,12 +56,16 @@
     <table class="data">
       <thead>
         <tr>
+          <th style="width:42px;"><input type="checkbox" id="selectOriginalAll" title="全选当前页待审核原创视频"></th>
           <th style="width:70px;">平台</th>
           <th>标题 / 内容</th>
+          <th style="width:180px;">产品名称</th>
           <th style="width:90px;">时长</th>
           <th style="width:130px;">UP主 / 作者</th>
           <th style="width:80px;">分类</th>
           <th style="width:80px;">浏览</th>
+          <th style="width:130px;">KPI播放</th>
+          <th style="width:130px;">KPI互动</th>
           <th style="width:76px;">点赞</th>
           <th style="width:76px;">收藏</th>
           <th style="width:76px;">分享</th>
@@ -65,7 +76,7 @@
           <th style="width:88px;">操作</th>
         </tr>
       </thead>
-      <tbody id="tbody"><tr><td colspan="14"><span class="spin"></span> 加载中…</td></tr></tbody>
+      <tbody id="tbody"><tr><td colspan="18"><span class="spin"></span> 加载中…</td></tr></tbody>
     </table>
   </div>
   <div class="pager" id="pager" style="padding:12px 14px;"></div>
@@ -74,7 +85,7 @@
 
 {% block scripts %}
 <script>
-let page = 1, size = 20, total = 0, rows = [];
+let page = 1, size = 20, total = 0, rows = [], productEditMode = false;
 
 function params() {
   const p = new URLSearchParams();
@@ -86,19 +97,20 @@ function params() {
   if (v("fCategory")) p.set("category", v("fCategory"));
   if (v("fDays")) p.set("days", v("fDays"));
   if (v("fPublishDays")) p.set("publish_days", v("fPublishDays"));
+  if (v("fKpiStatus")) p.set("kpi_status", v("fKpiStatus"));
   p.set("page", page); p.set("size", size);
   return p;
 }
 
 async function load() {
-  S.$("tbody").innerHTML = `<tr><td colspan="14" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  S.$("tbody").innerHTML = `<tr><td colspan="18" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
   try {
     const d = await S.api("/videos?" + params().toString());
     rows = d.rows; total = d.total;
     render();
     S.pager(S.$("pager"), total, page, size, p => { page = p; load(); });
   } catch (e) {
-    S.$("tbody").innerHTML = `<tr><td colspan="14" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="18" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
   }
 }
 
@@ -123,22 +135,27 @@ function fmtDuration(v) {
 
 function render() {
   if (!rows.length) {
-    S.$("tbody").innerHTML = `<tr><td colspan="14"><div class="empty"><div class="big">🎬</div>没有符合条件的视频</div></td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="18"><div class="empty"><div class="big">🎬</div>没有符合条件的视频</div></td></tr>`;
     return;
   }
   S.$("tbody").innerHTML = rows.map(r => {
     const title = r.title && r.title.trim() ? r.title : "(无标题)";
+    const needsReview = r.category !== "商单" && r.product_name && !Number(r.product_reviewed);
     return `<tr>
+      <td>${r.category === "商单" ? '<span class="muted">—</span>' : `<input type="checkbox" class="product-select" data-src-table="${S.esc(r.src_table)}" data-content-id="${S.esc(r.content_id)}" title="选择后可编辑或审核产品名称">`}</td>
       <td>${S.platformTag(r.platform)}</td>
       <td class="cell-content">
         ${r.url
           ? `<a href="${S.esc(r.url)}" target="_blank" title="点击打开原内容 · 右键复制链接" class="vtitle" data-url="${S.esc(r.url)}"><div class="clamp">${S.esc(title)}</div></a>`
           : `<div class="clamp">${S.esc(title)}</div>`}
       </td>
+      <td>${productEditMode && r.category !== "商单" ? `<input class="product-name-edit" data-src-table="${S.esc(r.src_table)}" data-content-id="${S.esc(r.content_id)}" value="${S.esc(r.product_name || "")}" placeholder="填写品牌 / 产品 / 型号" style="min-width:150px;width:100%">` : (r.product_name ? `<div class="clamp" title="${S.esc(r.product_name)}" style="color:${needsReview ? '#9ca3af' : 'inherit'}">${S.esc(r.product_name)}${needsReview ? '<span class="sub2">待审核</span>' : (r.category !== "商单" ? '<span class="sub2" style="color:#16a34a">已审核</span>' : '')}</div>` : '<span class="muted">—</span>')}</td>
       <td class="mono">${fmtDuration(r.duration)}</td>
       <td class="nowrap">${S.esc(r.upname || "匿名")}</td>
       <td>${r.category ? S.badge(r.category, r.category === "商单" ? "amber" : "green") : '<span class="muted">—</span>'}</td>
       <td class="mono">${fmtNum(r.view_count)}</td>
+      <td class="mono">${r.kpi_views_target == null ? '<span class="muted">—</span>' : `${fmtNum(r.kpi_views_target)} ${r.kpi_play_reached ? S.badge("已达标", "green") : S.badge("未达标", "gray")}`}</td>
+      <td class="mono">${r.kpi_interactions_target == null ? '<span class="muted">—</span>' : `${fmtNum(r.kpi_interactions_target)} ${r.kpi_interaction_reached ? S.badge("已达标", "green") : S.badge("未达标", "gray")}`}</td>
       <td class="mono">${fmtNum(r.like_count)}</td>
       <td class="mono">${fmtNum(r.collect_count)}</td>
       <td class="mono">${fmtNum(r.share_count)}</td>
@@ -154,6 +171,37 @@ function render() {
 S.$("searchBtn").onclick = () => { page = 1; load(); };
 S.$("fCategory").onchange = () => { page = 1; load(); };
 S.$("fPublishDays").onchange = () => { page = 1; load(); };
+S.$("fKpiStatus").onchange = () => { page = 1; load(); };
+S.$("selectOriginalAll").onchange = e => S.$$(".product-select:not(:disabled)").forEach(box => box.checked = e.target.checked);
+S.$("reviewProductsBtn").onclick = async () => {
+  const items = S.$$(".product-select:checked").map(box => ({ src_table: box.dataset.srcTable, content_id: box.dataset.contentId }));
+  if (!items.length) return S.toast("请选择待审核的原创视频", "err");
+  try {
+    const result = await S.api("/videos/product-review", { method: "POST", body: { items } });
+    S.toast(`已审核 ${result.reviewed} 条产品名称`, "ok");
+    load();
+  } catch (e) { S.toast(`审核失败:${e.message}`, "err"); }
+};
+S.$("editProductsBtn").onclick = async () => {
+  if (!productEditMode) {
+    productEditMode = true;
+    S.$("editProductsBtn").textContent = "💾 保存产品名称";
+    render();
+    return;
+  }
+  const changes = S.$$(".product-name-edit").map(input => {
+    const row = rows.find(r => r.src_table === input.dataset.srcTable && String(r.content_id) === String(input.dataset.contentId));
+    return { src_table: input.dataset.srcTable, content_id: input.dataset.contentId, product_name: input.value.trim(), old_name: row?.product_name || "" };
+  }).filter(change => change.product_name !== change.old_name).map(({old_name, ...change}) => change);
+  if (!changes.length) { productEditMode = false; S.$("editProductsBtn").textContent = "✏️ 编辑产品名称"; render(); return; }
+  try {
+    const result = await S.api("/videos/product-name", { method: "POST", body: { changes } });
+    S.toast(`已保存 ${result.updated} 条，修改项待审核`, "ok");
+    productEditMode = false;
+    S.$("editProductsBtn").textContent = "✏️ 编辑产品名称";
+    load();
+  } catch (e) { S.toast(`保存失败:${e.message}`, "err"); }
+};
 
 // 右键标题复制视频链接
 S.$("tbody").addEventListener("contextmenu", (e) => {
@@ -174,7 +222,7 @@ S.$("tbody").addEventListener("contextmenu", (e) => {
   S.toast(ok ? "已复制视频链接" : "复制失败,请手动复制", ok ? "ok" : "err");
 });
 S.$("resetBtn").onclick = () => {
-  ["fPlatform","fQ","fUp","fVid","fDays","fPublishDays","fCategory"].forEach(id => S.$(id).value = "");
+  ["fPlatform","fQ","fUp","fVid","fDays","fPublishDays","fCategory","fKpiStatus"].forEach(id => S.$(id).value = "");
   page = 1; load();
 };
 ["fQ","fUp","fVid"].forEach(id => S.$(id).addEventListener("keydown", e => {
@@ -183,9 +231,9 @@ S.$("resetBtn").onclick = () => {
 
 S.$("exportBtn").onclick = () => {
   if (!rows.length) return S.toast("当前没有可导出的数据", "err");
-    const head = ["平台","标题","时长","UP主/作者","分类","浏览","点赞","收藏","分享","评论数","负面数","意向数","链接","发布时间"];
+    const head = ["平台","标题","产品名称","时长","UP主/作者","分类","浏览","点赞","收藏","分享","评论数","负面数","意向数","链接","发布时间"];
   const lines = [head.join(",")].concat(rows.map(r => [
-    r.platform, r.title || "", r.duration || "", r.upname || "", r.category || "", r.view_count || "",
+    r.platform, r.title || "", r.product_name || "", r.duration || "", r.upname || "", r.category || "", r.view_count || "",
     r.like_count || "", r.collect_count || "", r.share_count || "", r.comment_count || 0,
     r.neg_count || 0, r.intent_count || 0, r.url || "",
     r.publish_time ? S.fmtTs(r.publish_time) : "",

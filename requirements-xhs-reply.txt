@@ -1,5 +1,5 @@
 # API POST 签名与传输
-curl_cffi>=0.7
+curl_cffi>=0.15
 xhshow>=0.1.0
 # 比特浏览器 CDP 连接
 playwright>=1.40

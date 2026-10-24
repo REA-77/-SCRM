@@ -18,10 +18,10 @@ def execute_task(task):
         elif task['platform'] == '抖音':
             results = run_douyin_reply([task])
             match = next((r for r in results if str(r.get('replyPlanId')) == str(task['comment_id'])), {})
-            if match.get('status') not in (
-                'replied', 'deleted', 'dry_run_delete',
-                'skipped_already_replied', 'skipped_reply_ledger'
-            ):
+            if match.get('status') == 'uncertain':
+                status = 'uncertain'
+                error = match.get('error') or '发表结果待人工核对，请勿直接重试'
+            elif match.get('status') != 'replied':
                 raise RuntimeError(match.get('error') or match.get('status') or '未确认回复结果')
         else:
             call_web_reply(task)
@@ -31,8 +31,13 @@ def execute_task(task):
         with conn.cursor() as cur:
             if status == 'success':
                 cur.execute(f"UPDATE `{task['src_table']}` SET handled=1 WHERE id=%s", (task['src_pk'],))
-            cur.execute('UPDATE comment_auto_task SET status=%s,error_message=%s,finished_ts=%s WHERE id=%s',
-                        (status, error, int(time.time()), task['id']))
+            verify_after = int(time.time()) + 1800 if status == 'uncertain' else None
+            cur.execute('''UPDATE comment_auto_task
+                           SET status=%s,error_message=%s,finished_ts=%s,
+                               claim_owner=NULL,claimed_ts=NULL,
+                               verify_after_ts=COALESCE(%s, verify_after_ts)
+                           WHERE id=%s''',
+                        (status, error, int(time.time()), verify_after, task['id']))
         conn.commit()
 
 def _load_task(cur, task_id):
@@ -40,8 +45,8 @@ def _load_task(cur, task_id):
     task = cur.fetchone()
     if not task:
         return None, ('任务不存在', 404)
-    if task['status'] not in ('pending', 'failed'):
-        return None, ('仅待执行或失败任务可执行', 409)
+    if task['status'] not in ('queued', 'pending', 'failed', 'claimed'):
+        return None, ('仅待执行、失败或已领取任务可执行', 409)
     if SOURCES.get(task['platform']) != task['src_table'] or (
         task['action_type'] != 'reply' and
         not (task['platform'] in ('B站', '抖音') and task['action_type'] == 'delete')
@@ -68,14 +73,39 @@ def _load_task(cur, task_id):
     return merged, None
 
 
+def _finish_no_action(cur, task_id, task, reason):
+    """A disappeared comment is not a transport failure and is never retried."""
+    if task:
+        cur.execute(f"UPDATE `{task['src_table']}` SET no_action=1 WHERE id=%s", (task['src_pk'],))
+    cur.execute("""UPDATE comment_auto_task
+                   SET status='no_action', error_message=%s, finished_ts=%s,
+                       claim_owner=NULL, claimed_ts=NULL
+                   WHERE id=%s""", (reason[:1000], int(time.time()), task_id))
+
+
 def _run_queued_task(task_id):
     with get_conn() as conn:
         with conn.cursor() as cur:
             task, error = _load_task(cur, task_id)
             if error:
-                cur.execute("UPDATE comment_auto_task SET status='failed',error_message=%s,finished_ts=%s WHERE id=%s AND status IN ('pending','failed')", (error[0], int(time.time()), task_id))
+                if error[0].startswith('评论不存在'):
+                    _finish_no_action(cur, task_id, None, error[0])
+                else:
+                    cur.execute("""UPDATE comment_auto_task
+                                   SET status='failed',error_message=%s,finished_ts=%s,
+                                       claim_owner=NULL,claimed_ts=NULL
+                                   WHERE id=%s AND status IN ('queued','pending','failed','claimed')""",
+                                (error[0], int(time.time()), task_id))
             else:
-                cur.execute("UPDATE comment_auto_task SET status='running',started_ts=%s,finished_ts=NULL,error_message=NULL WHERE id=%s", (int(time.time()), task_id))
+                from comment_auto_worker import verify_comment_exists
+                if verify_comment_exists(task) is False:
+                    _finish_no_action(cur, task_id, task, '发送前确认：目标评论已删除或不可见')
+                    task = None
+                else:
+                    cur.execute("""UPDATE comment_auto_task
+                                   SET status='sending',started_ts=%s,finished_ts=NULL,error_message=NULL
+                                   WHERE id=%s AND status IN ('queued','pending','failed','claimed')""",
+                                (int(time.time()), task_id))
         conn.commit()
     if task:
         execute_task(task)
@@ -85,8 +115,47 @@ _TASK_QUEUE = TaskQueue(_run_queued_task, capacity=100)
 
 
 def launch_task(task_id):
-    """Queue only explicitly requested tasks; one platform write runs at a time."""
+    """Manual execution; one platform write runs at a time."""
     return _TASK_QUEUE.submit(task_id) in ('queued', 'duplicate')
+
+
+def launch_claimed_task(task_id):
+    """Called only by the database dispatcher after atomically claiming work."""
+    return _TASK_QUEUE.submit(task_id)
+
+
+def verify_uncertain_task(task_id, retry_after=1800):
+    """Run one reconciliation probe; unknown results are never resent."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM comment_auto_task WHERE id=%s AND status='uncertain' FOR UPDATE", (task_id,))
+            task = cur.fetchone()
+            if not task:
+                return 'skipped'
+            cur.execute(f"SELECT * FROM `{task['src_table']}` WHERE id=%s", (task['src_pk'],))
+            comment = cur.fetchone()
+            if not comment:
+                _finish_no_action(cur, task_id, task, '核验时评论已不存在')
+                conn.commit()
+                return 'no_action'
+    from comment_auto_worker import verify_reply
+    outcome = verify_reply({**task, **(comment or {})})
+    now = int(time.time())
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if outcome == 'confirmed':
+                cur.execute(f"UPDATE `{task['src_table']}` SET handled=1 WHERE id=%s", (task['src_pk'],))
+                cur.execute("""UPDATE comment_auto_task SET status='success', finished_ts=%s,
+                               error_message='定时核验确认已发送', verify_after_ts=NULL WHERE id=%s""", (now, task_id))
+            elif outcome == 'missing':
+                _finish_no_action(cur, task_id, task, '核验时目标评论已删除或不可见')
+            else:
+                cur.execute("""UPDATE comment_auto_task
+                               SET verify_attempts=verify_attempts+1, verify_after_ts=%s,
+                                   error_message='发送结果待核验；已安排下一次回扫，不会自动重发'
+                               WHERE id=%s AND status='uncertain'""", (now + retry_after, task_id))
+        conn.commit()
+    return outcome
 
 
 @bp.get('/scrm/auto-tasks')
@@ -122,9 +191,33 @@ def retry(task_id):
             _, error = _load_task(cur, task_id)
             if error:
                 return jsonify(error=error[0]), error[1]
-            result = _TASK_QUEUE.submit(task_id)
-            if result == 'full':
-                return jsonify(error='任务队列已满，请稍后重试'), 429
-            cur.execute("UPDATE comment_auto_task SET status='pending',started_ts=NULL,finished_ts=NULL,error_message=NULL WHERE id=%s", (task_id,))
+            cur.execute("""UPDATE comment_auto_task
+                           SET status='queued',started_ts=NULL,finished_ts=NULL,
+                               claim_owner=NULL,claimed_ts=NULL,error_message=NULL
+                           WHERE id=%s""", (task_id,))
         conn.commit()
-    return jsonify(ok=True, id=task_id, status='pending', queued=True), 202
+    return jsonify(ok=True, id=task_id, status='queued', queued=True), 202
+
+
+@bp.post('/scrm/api/auto-tasks/<int:task_id>/resolve')
+def resolve_uncertain(task_id):
+    """Operator reconciliation: this never causes another platform write."""
+    body = request.get_json(silent=True) or {}
+    outcome = body.get('outcome')
+    if outcome not in ('sent', 'no_action'):
+        return jsonify(error='仅支持 sent 或 no_action'), 400
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM comment_auto_task WHERE id=%s AND status='uncertain' FOR UPDATE", (task_id,))
+            task = cur.fetchone()
+            if not task:
+                return jsonify(error='仅结果待核对任务可核销'), 409
+            now = int(time.time())
+            if outcome == 'sent':
+                cur.execute(f"UPDATE `{task['src_table']}` SET handled=1 WHERE id=%s", (task['src_pk'],))
+                cur.execute("""UPDATE comment_auto_task SET status='success', finished_ts=%s,
+                               verify_after_ts=NULL,error_message='人工核销：已确认发送' WHERE id=%s""", (now, task_id))
+            else:
+                _finish_no_action(cur, task_id, task, '人工核销：不再处理')
+        conn.commit()
+    return jsonify(ok=True, id=task_id, status='success' if outcome == 'sent' else 'no_action')

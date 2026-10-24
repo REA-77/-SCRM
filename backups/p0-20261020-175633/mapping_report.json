@@ -1,0 +1,79 @@
+{
+  "creator_count": 224,
+  "platform_account_count": 336,
+  "skill_count": 4,
+  "orphan_platform_accounts": [
+    {
+      "平台": "B站",
+      "昵称": null,
+      "UP主ID": null,
+      "cookie": null,
+      "凭据": null,
+      "标签": null,
+      "负责人": null,
+      "主页链接": null,
+      "状态": "active",
+      "备注": null,
+      "粉丝": null,
+      "ID": null,
+      "Bit窗口": null,
+      "cookie_status": "unknown",
+      "cookie_checked_at": null,
+      "cookie_check_message": null,
+      "cookie_fingerprint": null,
+      "最近更新时间": 0,
+      "本月更新视频数": 0
+    },
+    {
+      "平台": "B站",
+      "昵称": null,
+      "UP主ID": null,
+      "cookie": null,
+      "凭据": null,
+      "标签": null,
+      "负责人": null,
+      "主页链接": null,
+      "状态": "active",
+      "备注": null,
+      "粉丝": null,
+      "ID": null,
+      "Bit窗口": null,
+      "cookie_status": "unknown",
+      "cookie_checked_at": null,
+      "cookie_check_message": null,
+      "cookie_fingerprint": null,
+      "最近更新时间": 0,
+      "本月更新视频数": 0
+    }
+  ],
+  "skill_mappings": [
+    {
+      "skill_id": 158,
+      "skill_name": "家电明日香",
+      "bind_up": "家电明日香-",
+      "resolved_up_id": 116,
+      "status": "mapped"
+    },
+    {
+      "skill_id": 159,
+      "skill_name": "家电老炮·老王",
+      "bind_up": "家电测评老王",
+      "resolved_up_id": null,
+      "status": "unmapped"
+    },
+    {
+      "skill_id": 160,
+      "skill_name": "精致生活家·Lily",
+      "bind_up": "Lily的家电研究所",
+      "resolved_up_id": null,
+      "status": "unmapped"
+    },
+    {
+      "skill_id": 161,
+      "skill_name": "大白话家电",
+      "bind_up": "大白话聊家电",
+      "resolved_up_id": null,
+      "status": "unmapped"
+    }
+  ]
+}

@@ -115,7 +115,7 @@ class CookieHealthTests(unittest.TestCase):
         count, page = cursor.execute.call_args_list[:2]
         self.assertIn("A.cookie_status = %s", count.args[0])
         self.assertEqual(count.args[1], ["expired"])
-        self.assertIn("A2.cookie_status = %s", page.args[0])
+        self.assertIn("A.cookie_status = %s", page.args[0])
         self.assertEqual(page.args[1][0], "expired")
 
 

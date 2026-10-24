@@ -1,0 +1,452 @@
+[
+  {
+    "id": 1,
+    "comment_type": "灌水",
+    "account_level": "L1",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"max_len\": 10}"
+  },
+  {
+    "id": 2,
+    "comment_type": "灌水",
+    "account_level": "L2",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"max_len\": 10}"
+  },
+  {
+    "id": 3,
+    "comment_type": "灌水",
+    "account_level": "L3",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"max_len\": 10}"
+  },
+  {
+    "id": 4,
+    "comment_type": "灌水",
+    "account_level": "L4",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"max_len\": 10}"
+  },
+  {
+    "id": 5,
+    "comment_type": "灌水",
+    "account_level": "L5",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"max_len\": 10}"
+  },
+  {
+    "id": 6,
+    "comment_type": "求推荐",
+    "account_level": "L1",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"must_ask_back\": true}"
+  },
+  {
+    "id": 7,
+    "comment_type": "求推荐",
+    "account_level": "L2",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"must_ask_back\": true}"
+  },
+  {
+    "id": 8,
+    "comment_type": "求推荐",
+    "account_level": "L3",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"must_ask_back\": true}"
+  },
+  {
+    "id": 9,
+    "comment_type": "求推荐",
+    "account_level": "L4",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"must_ask_back\": true}"
+  },
+  {
+    "id": 10,
+    "comment_type": "求推荐",
+    "account_level": "L5",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"must_ask_back\": true}"
+  },
+  {
+    "id": 11,
+    "comment_type": "参数咨询",
+    "account_level": "L1",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 12,
+    "comment_type": "参数咨询",
+    "account_level": "L2",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 13,
+    "comment_type": "参数咨询",
+    "account_level": "L3",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 14,
+    "comment_type": "参数咨询",
+    "account_level": "L4",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 15,
+    "comment_type": "参数咨询",
+    "account_level": "L5",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 16,
+    "comment_type": "故障求助",
+    "account_level": "L1",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"must_have_sequence\": true}"
+  },
+  {
+    "id": 17,
+    "comment_type": "故障求助",
+    "account_level": "L2",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"must_have_sequence\": true}"
+  },
+  {
+    "id": 18,
+    "comment_type": "故障求助",
+    "account_level": "L3",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"must_have_sequence\": true}"
+  },
+  {
+    "id": 19,
+    "comment_type": "故障求助",
+    "account_level": "L4",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"must_have_sequence\": true}"
+  },
+  {
+    "id": 20,
+    "comment_type": "故障求助",
+    "account_level": "L5",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": "{\"must_have_sequence\": true}"
+  },
+  {
+    "id": 21,
+    "comment_type": "已购反馈",
+    "account_level": "L1",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 22,
+    "comment_type": "已购反馈",
+    "account_level": "L2",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 23,
+    "comment_type": "已购反馈",
+    "account_level": "L3",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 24,
+    "comment_type": "已购反馈",
+    "account_level": "L4",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 25,
+    "comment_type": "已购反馈",
+    "account_level": "L5",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 26,
+    "comment_type": "专业质疑",
+    "account_level": "L1",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 27,
+    "comment_type": "专业质疑",
+    "account_level": "L2",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 28,
+    "comment_type": "专业质疑",
+    "account_level": "L3",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 29,
+    "comment_type": "专业质疑",
+    "account_level": "L4",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 30,
+    "comment_type": "专业质疑",
+    "account_level": "L5",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 31,
+    "comment_type": "价格",
+    "account_level": "L1",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 32,
+    "comment_type": "价格",
+    "account_level": "L2",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 33,
+    "comment_type": "价格",
+    "account_level": "L3",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 34,
+    "comment_type": "价格",
+    "account_level": "L4",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 35,
+    "comment_type": "价格",
+    "account_level": "L5",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 36,
+    "comment_type": "攻击",
+    "account_level": "L1",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 37,
+    "comment_type": "攻击",
+    "account_level": "L2",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 38,
+    "comment_type": "攻击",
+    "account_level": "L3",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 39,
+    "comment_type": "攻击",
+    "account_level": "L4",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 40,
+    "comment_type": "攻击",
+    "account_level": "L5",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 41,
+    "comment_type": "恰饭",
+    "account_level": "L1",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 42,
+    "comment_type": "恰饭",
+    "account_level": "L2",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 43,
+    "comment_type": "恰饭",
+    "account_level": "L3",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 44,
+    "comment_type": "恰饭",
+    "account_level": "L4",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 45,
+    "comment_type": "恰饭",
+    "account_level": "L5",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 1,
+    "extra_rule": "{\"human_required\": true}"
+  },
+  {
+    "id": 46,
+    "comment_type": "闲聊",
+    "account_level": "L1",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 47,
+    "comment_type": "闲聊",
+    "account_level": "L2",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 48,
+    "comment_type": "闲聊",
+    "account_level": "L3",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 49,
+    "comment_type": "闲聊",
+    "account_level": "L4",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  },
+  {
+    "id": 50,
+    "comment_type": "闲聊",
+    "account_level": "L5",
+    "reply_rate": "0.70",
+    "target_len": null,
+    "human_required": 0,
+    "extra_rule": null
+  }
+]

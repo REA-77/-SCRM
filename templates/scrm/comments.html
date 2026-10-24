@@ -1,6 +1,11 @@
 {% extends "scrm/base.html" %}
 {% block title %}评论列表{% endblock %}
 {% block content %}
+<style>
+  /* 行高被操作列撑高时，垂直居中会让意图分析列的多个徽标摊开、与相邻列内容同高，看起来像标签飘到别的列。
+     本页改为顶部对齐，让所有单元格内容从行首聚拢排列。 */
+  table.data tbody td { vertical-align: top; }
+</style>
 <div class="page-head">
   <div>
     <h2>💬 评论列表</h2>
@@ -25,6 +30,7 @@
     <option value="analyzed">已分析</option>
     <option value="intent">已标注意图</option>
     <option value="reply_ready">有推荐回复</option>
+    <option value="human_review">转人工</option>
     <option value="unreviewed">未审核</option>
     <option value="reviewed">已审核</option>
     <option value="unhandled">未处理</option>
@@ -41,6 +47,11 @@
     <option value="">全部情感</option>
     <option value="positive">正向</option>
     <option value="negative">负向</option>
+  </select>
+  <select id="fSelf">
+    <option value="">本人回复：全部</option>
+    <option value="1">本人回复</option>
+    <option value="0">非本人回复</option>
   </select>
   <select id="fDays">
     <option value="">全部时间</option>
@@ -72,20 +83,18 @@
       <thead>
         <tr>
           <th style="width:34px;"><input type="checkbox" id="chkAll"></th>
-          <th style="width:70px;">平台</th>
+          <th style="width:115px;">平台 / 作者</th>
           <th>评论内容</th>
-          <th style="width:260px;">推荐回复</th>
+          <th style="width:420px;">推荐回复</th>
           <th style="width:110px;">评论人</th>
-          <th style="width:210px;">所属内容</th>
-          <th style="width:130px;">作者昵称</th>
-          <th style="width:120px;">意图分析</th>
-          <th style="width:90px;">正负向</th>
+          <th style="width:170px;">所属内容</th>
+          <th style="width:135px;">意图分析</th>
           <th style="width:105px;">状态</th>
-          <th style="width:130px;">评论时间</th>
-          <th style="width:250px;">操作</th>
+          <th style="width:110px;">评论时间</th>
+          <th style="width:110px;">操作</th>
         </tr>
       </thead>
-      <tbody id="tbody"><tr><td colspan="12"><span class="spin"></span> 加载中…</td></tr></tbody>
+      <tbody id="tbody"><tr><td colspan="10"><span class="spin"></span> 加载中…</td></tr></tbody>
     </table>
   </div>
   <div class="sub2" style="padding:12px 14px;">按评论主题分页，每组最多展示 50 条评论；可翻页查看其余回复。筛选命中子评论时仍保留所属主题。</div>
@@ -100,7 +109,7 @@ let threadPages = new Map(), loadVersion = 0;
 const regeneratingReplies = new Set();
 const filterFields = {
   platform: "fPlatform", status: "fStatus", intent: "fIntent",
-  sentiment: "fSentiment", days: "fDays", user: "fUser", author: "fAuthor", q: "fQ", vid: "fVid",
+  sentiment: "fSentiment", self_reply: "fSelf", days: "fDays", user: "fUser", author: "fAuthor", q: "fQ", vid: "fVid",
 };
 
 function params() {
@@ -110,6 +119,7 @@ function params() {
   if (v("fStatus")) p.set("status", v("fStatus"));
   if (v("fIntent")) p.set("intent", v("fIntent"));
   if (v("fSentiment")) p.set("sentiment", v("fSentiment"));
+  if (v("fSelf")) p.set("is_self", v("fSelf"));
   if (v("fDays")) p.set("days", v("fDays"));
   if (v("fUser")) p.set("user", v("fUser"));
   if (v("fAuthor")) p.set("author", v("fAuthor"));
@@ -125,7 +135,7 @@ async function load() {
   const query = params().toString();
   // 将已应用的筛选和分页保存在当前历史记录中，浏览器后退时也能恢复。
   history.replaceState(null, "", location.pathname + "?" + query);
-  S.$("tbody").innerHTML = `<tr><td colspan="12" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  S.$("tbody").innerHTML = `<tr><td colspan="10" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
   try {
     const d = await S.api("/comments?" + query);
     if (version !== loadVersion) return;
@@ -137,7 +147,7 @@ async function load() {
     requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
   } catch (e) {
     if (version !== loadVersion) return;
-    S.$("tbody").innerHTML = `<tr><td colspan="12" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="10" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
     requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
   }
 }
@@ -172,7 +182,7 @@ async function loadThread(button) {
 
 function render() {
   if (!rows.length) {
-    S.$("tbody").innerHTML = `<tr><td colspan="12"><div class="empty"><div class="big">🔍</div>没有符合条件的评论</div></td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="10"><div class="empty"><div class="big">🔍</div>没有符合条件的评论</div></td></tr>`;
     updateSelectedInfo();
     return;
   }
@@ -182,13 +192,13 @@ function render() {
     const meta = threadPages.get(key);
     const last = !rows[index+1] || `${rows[index+1].src_table}/${rows[index+1].thread_root}` !== key;
     const navigation = last && meta && (meta.has_more || meta.offset > 0)
-      ? `<tr><td colspan="12" class="sub2">本组第 ${Math.floor(meta.offset / meta.batch_size) + 1} 页
+      ? `<tr><td colspan="10" class="sub2">本组第 ${Math.floor(meta.offset / meta.batch_size) + 1} 页
           ${meta.offset > 0 ? `<button class="btn sm" data-thread="${S.esc(key)}" data-offset="${Math.max(0, meta.offset-meta.batch_size)}">上一页回复</button>` : ''}
           ${meta.has_more ? `<button class="btn sm" data-thread="${S.esc(key)}" data-offset="${meta.offset+meta.batch_size}">下一页回复</button>` : ''}
           翻页将替换当前组回复，保留主题评论。</td></tr>` : '';
     return `<tr class="${cls}">
       <td><input type="checkbox" class="chk" ${r.matches_filter === false ? "disabled" : ""} data-table="${r.src_table}" data-id="${r.src_pk}"></td>
-      <td>${S.platformTag(r.platform)}</td>
+      <td class="nowrap">${S.platformTag(r.platform)}<div style="margin-top:4px;">${S.esc(r.author_nickname || "—")}</div></td>
       <td class="cell-content" style="padding-left:${12 + Math.min(r.depth || 0, 8) * 20}px;">
         ${r.depth ? `<div class="sub2">↳ ${r.depth + 1}级评论</div>` : ""}
         ${r.parent_missing ? `<div class="sub2">父评论未入库</div>` : ""}
@@ -201,23 +211,23 @@ function render() {
           ${regeneratingReplies.has(`${r.src_table}/${r.src_pk}`) ? 'disabled' : ''}
           title="重新分析该评论并生成推荐回复">${regeneratingReplies.has(`${r.src_table}/${r.src_pk}`) ? '<span class="spin"></span> 生成中…' : '🔄 重新生成'}</button>
       </td>
-      <td class="nowrap">${S.esc(r.nickname || "匿名")}<div class="sub2">👍 ${S.esc(r.likes || 0)}</div></td>
+      <td class="nowrap">${S.esc(r.nickname || "匿名")}<div class="sub2">👍 ${S.esc(r.likes || 0)}</div><div style="margin-top:4px;">${S.badge(r.is_self ? "本人回复" : "非本人", r.is_self ? "primary" : "gray")}</div></td>
       <td class="cell-content">
         ${r.content_id
           ? `<a class="content-link" href="/scrm/videos?${S.esc(new URLSearchParams({vid: r.content_id, platform: r.platform || ""}).toString())}" data-url="${S.esc(r.video_url || "")}" title="单击查看视频列表，双击打开原内容"><div class="clamp">${S.esc(r.video_title || "(无标题)")}</div></a>`
           : `<span class="muted">—</span>`}
         <div class="sub2 mono">${S.esc(r.content_id || "-")}</div>
       </td>
-      <td class="nowrap">${S.esc(r.author_nickname || "—")}</td>
-      <td>${intentResult(r)}</td>
-      <td>${sentimentResult(r)}</td>
+      <td>${analysisResult(r)}</td>
       <td>${S.badge(rowStatus(r).label, rowStatus(r).color)}</td>
       <td class="nowrap muted">${S.fmtTs(r.ctime)}</td>
-      <td class="nowrap">
-        <button class="btn sm primary" data-act="calibrate" data-i="${rows.indexOf(r)}">✏️ 人工修正</button>
-        <button class="btn sm primary" data-act="review" data-table="${r.src_table}" data-id="${r.src_pk}">审核通过</button>
-        <button class="btn sm danger" data-act="markDelete" data-table="${r.src_table}" data-id="${r.src_pk}">标注删除</button>
-        <button class="btn sm" data-act="noAction" data-table="${r.src_table}" data-id="${r.src_pk}">无需操作</button>
+      <td>
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:stretch;">
+          <button class="btn sm primary" data-act="calibrate" data-i="${rows.indexOf(r)}">人工修正</button>
+          <button class="btn sm primary" data-act="review" data-table="${r.src_table}" data-id="${r.src_pk}">审核通过</button>
+          <button class="btn sm danger" data-act="markDelete" data-table="${r.src_table}" data-id="${r.src_pk}">标注删除</button>
+          <button class="btn sm" data-act="noAction" data-table="${r.src_table}" data-id="${r.src_pk}">无需操作</button>
+        </div>
       </td>
     </tr>${navigation}`;
   }).join("");
@@ -243,18 +253,20 @@ async function regenerateReply(button) {
   try {
     const result = await S.api(`/comment/${encodeURIComponent(button.dataset.table)}/${encodeURIComponent(button.dataset.id)}/analyze`, { method: "POST" });
     regeneratingReplies.delete(key);
-    S.toast("推荐回复已重新生成", "ok");
+    S.toast(result.manual_reply_override ? "分析已更新，已保留人工回复" : "推荐回复已重新生成", "ok");
     const row = rows.find(r => r.src_table === button.dataset.table && Number(r.src_pk) === Number(button.dataset.id));
     if (row) {
-      row.reply = result.reply || row.reply;
+      // 服务端返回的是最终有效回复；人工编辑过时保持人工内容，其他情况同步本次生成结果。
+      row.reply = result.reply || "";
       row.neg = result.negative ? 1 : 0;
       row.intent = result.intent ? 1 : 0;
       row.analyzed = 1;
+      row.comment_type = result.analysis?.comment_type || "";
+      row.human_review = result.human_review ? 1 : 0;
       const cells = button.closest("tr").children;
       if (cells[3]) cells[3].innerHTML = row.reply ? `<div class="clamp comment-preview" tabindex="0" data-preview="${S.esc(row.reply)}">${S.esc(row.reply)}</div>` : '<span class="muted">—</span>';
-      if (cells[7]) cells[7].innerHTML = intentResult(row);
-      if (cells[8]) cells[8].innerHTML = sentimentResult(row);
-      if (cells[9]) cells[9].innerHTML = S.badge(rowStatus(row).label, rowStatus(row).color);
+      if (cells[6]) cells[6].innerHTML = analysisResult(row);
+      if (cells[7]) cells[7].innerHTML = S.badge(rowStatus(row).label, rowStatus(row).color);
     }
   } catch (e) {
     S.toast(e.message || "重新生成失败，请重试", "err");
@@ -331,10 +343,18 @@ function sentimentResult(r) {
   return r.neg ? S.badge("负向", "red", true) : S.badge("正向", "green");
 }
 
+function analysisResult(r) {
+  return `${intentResult(r)}
+    <div style="margin-top:4px;">${r.comment_type ? S.badge(S.esc(r.comment_type), "teal") : '<span class="muted">—</span>'}</div>
+    <div style="margin-top:4px;">${sentimentResult(r)}</div>`;
+}
+
 function rowStatus(r) {
+  if (r.is_self) return { label: "已处理", color: "teal" };
   if (r.handled) return { label: "已处理", color: "teal" };
   if (r.no_action) return { label: "无需操作", color: "gray" };
   if (r.delreq) return { label: "待删除", color: "red" };
+  if (r.human_review) return { label: "转人工", color: "amber" };
   if (r.reviewed) return { label: "已审核", color: "green" };
   if (isAnalysisFailed(r)) return { label: "分析失败", color: "red" };
   if (hasValidReply(r)) return { label: "有推荐回复", color: "primary" };
@@ -399,9 +419,8 @@ function updateCommentRow(row) {
   S.$$("#tbody button[data-act]").forEach(button => {
     if (button.dataset.table !== row.src_table || Number(button.dataset.id) !== Number(row.src_pk)) return;
     const cells = button.closest("tr").children;
-    if (cells[7]) cells[7].innerHTML = intentResult(row);
-    if (cells[8]) cells[8].innerHTML = sentimentResult(row);
-    if (cells[9]) cells[9].innerHTML = S.badge(rowStatus(row).label, rowStatus(row).color);
+    if (cells[6]) cells[6].innerHTML = analysisResult(row);
+    if (cells[7]) cells[7].innerHTML = S.badge(rowStatus(row).label, rowStatus(row).color);
   });
 }
 
@@ -536,10 +555,10 @@ function calibrationModal(r) {
 
 S.$("exportBtn").onclick = () => {
   if (!rows.length) return S.toast("当前没有可导出的数据", "err");
-  const head = ["平台","评论内容","推荐回复","评论人","所属内容标题","作者昵称","内容ID","意图分析","正负向","状态","点赞","评论时间"];
+  const head = ["平台","评论内容","推荐回复","评论人","所属内容标题","作者昵称","内容ID","意图分析","评论类型","正负向","状态","点赞","评论时间"];
   const lines = [head.join(",")].concat(rows.map(r => [
     r.platform, r.content || "", r.reply || "", r.nickname || "", r.video_title || "", r.author_nickname || "", r.content_id || "",
-    !r.analyzed ? "待分析" : (r.intent ? "有意图" : "无意图"),
+    !r.analyzed ? "待分析" : (r.intent ? "有意图" : "无意图"), r.comment_type || "",
     !r.analyzed ? "待分析" : (r.neg ? "负向" : "正向"),
     rowStatus(r).label,
     r.likes || 0, S.fmtTs(r.ctime),
@@ -555,7 +574,7 @@ S.$("exportBtn").onclick = () => {
 (() => {
   const qs = new URLSearchParams(location.search);
   Object.entries(filterFields).forEach(([key, id]) => {
-    S.$(id).value = qs.get(key) || "";
+    if (qs.has(key)) S.$(id).value = qs.get(key) || "";
   });
   const savedPage = Number(qs.get("page"));
   const savedSize = Number(qs.get("size"));

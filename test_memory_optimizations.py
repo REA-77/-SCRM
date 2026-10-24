@@ -91,7 +91,11 @@ class AnalyzerMemoryTests(unittest.TestCase):
         batches = []
         with patch.object(analyzer, 'COMMENT_TABLES', ['test']), \
              patch.object(analyzer, 'iter_unanalyzed', return_value=iter(records)), \
-             patch.object(analyzer, 'call_deepseek', return_value=(True, False, 'reply')), \
+             patch.object(analyzer, 'claim_comment', return_value=True), \
+             patch.object(analyzer, 'resolve_comment_context', return_value={'comment': 'test'}), \
+             patch.object(analyzer, 'evaluate_comment', return_value={
+                 'available': True, 'action': 'no_reply',
+                 'analysis': {'is_negative': True, 'has_purchase_intent': False}}), \
              patch.object(analyzer, 'mark_analyzed'), \
              patch.object(analyzer, 'send_feishu_alert', side_effect=lambda a: batches.append(len(a))), \
              patch.object(analyzer.logger, 'info'):

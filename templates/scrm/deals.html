@@ -31,6 +31,7 @@
           <th>商单名称</th>
           <th style="width:100px;">品牌</th>
           <th style="width:120px;">产品</th>
+          <th style="width:140px;">型号</th>
           <th style="width:100px;">品类</th>
           <th style="width:140px;">订单编号</th>
           <th style="width:170px;">账户</th>
@@ -38,11 +39,12 @@
           <th style="width:80px;">负责人</th>
           <th style="width:76px;">视频数</th>
           <th style="width:90px;">状态</th>
-          <th style="width:120px;">预计发布</th>
-          <th style="width:140px;">操作</th>
+          <th style="width:120px;">排期</th>
+          <th style="width:120px;">实际发布</th>
+          <th style="width:210px;">操作</th>
         </tr>
       </thead>
-      <tbody id="tbody"><tr><td colspan="12"><span class="spin"></span> 加载中…</td></tr></tbody>
+      <tbody id="tbody"><tr><td colspan="14"><span class="spin"></span> 加载中…</td></tr></tbody>
     </table>
   </div>
   <div class="pager" id="pager" style="padding:12px 14px;"></div>
@@ -52,6 +54,7 @@
 {% block scripts %}
 <script>
 let page = 1, size = 20, total = 0, rows = [];
+function dateOnly(ts) { if (!ts) return ""; const d = new Date(Number(ts) * 1000); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
 const STATUS_COLOR = { executing: "primary", published: "teal", won: "green", kpi_done: "green", ended: "gray", canceled: "red" };
 const STATUS_TEXT = { executing: "执行中", published: "已发布", won: "合作成功", kpi_done: "KPI已完成", ended: "已结束", canceled: "已取消" };
 
@@ -64,26 +67,27 @@ function params() {
 }
 
 async function load() {
-    S.$("tbody").innerHTML = `<tr><td colspan="12" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  S.$("tbody").innerHTML = `<tr><td colspan="14" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
   try {
     const d = await S.api("/deals?" + params().toString());
     rows = d.rows; total = d.total;
     render();
     S.pager(S.$("pager"), total, page, size, p => { page = p; load(); });
   } catch (e) {
-    S.$("tbody").innerHTML = `<tr><td colspan="12" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="14" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
   }
 }
 
 function render() {
   if (!rows.length) {
-    S.$("tbody").innerHTML = `<tr><td colspan="12"><div class="empty"><div class="big">📑</div>暂无商单,询单标记「合作成功」后自动生成</div></td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="14"><div class="empty"><div class="big">📑</div>暂无商单,询单标记「合作成功」后自动生成</div></td></tr>`;
     return;
   }
   S.$("tbody").innerHTML = rows.map(r => `<tr>
     <td><a href="/scrm/deals/${r.id}"><div class="clamp">${S.esc(r.name || "-")}</div></a></td>
     <td>${S.esc(r.brand || "-")}</td>
     <td><div class="clamp sub2">${S.esc(r.product || "-")}</div></td>
+    <td><div class="clamp sub2">${S.esc(r.model || "-")}</div></td>
     <td>${S.esc(r.category || "—")}</td>
     <td class="mono">${S.esc(r.order_no || "—")}</td>
     <td><div class="clamp sub2">${S.esc(r.platform_accounts || "—")}</div></td>
@@ -91,9 +95,151 @@ function render() {
     <td>${S.esc(r.owner || "-")}</td>
     <td class="mono">${r.video_count || 0}</td>
     <td>${S.badge(r.display_status || STATUS_TEXT[r.status] || r.status, STATUS_COLOR[r.status] || "gray", true)}</td>
-    <td class="nowrap muted">${S.fmtTs(r.expect_ts)}</td>
-    <td class="nowrap"><a class="btn sm primary" href="/scrm/deals/${r.id}?edit=1">编辑</a> <a class="btn sm" href="/scrm/deals/${r.id}">详情</a></td>
+    <td class="nowrap muted">${r.expect_ts ? dateOnly(r.expect_ts) : "-"}</td>
+    <td class="nowrap muted">${r.actual_publish_date || (r.display_expect_ts ? dateOnly(r.display_expect_ts) : "—")}</td>
+    <td class="nowrap"><button class="btn sm" data-sync-id="${r.id}">同步参数</button> <a class="btn sm primary" href="/scrm/deals/${r.id}?edit=1">编辑</a> <a class="btn sm" href="/scrm/deals/${r.id}">详情</a> <button class="btn sm danger" data-del-deal="${r.id}">删除</button></td>
   </tr>`).join("");
+  S.$$('[data-sync-id]', S.$("tbody")).forEach(btn => {
+    btn.onclick = () => openProductSync(rows.find(r => Number(r.id) === Number(btn.dataset.syncId)));
+  });
+  S.$$('[data-del-deal]', S.$("tbody")).forEach(btn => {
+    btn.onclick = () => S.confirm("确认删除该商单及其展示视频吗？删除后无法恢复。", async () => {
+      await S.api(`/deals/${Number(btn.dataset.delDeal)}/delete`, { method: "POST" });
+      S.toast("商单已删除", "ok");
+      load();
+    });
+  });
+}
+
+function modelId(brand, name) {
+  return `${brand || ""}-${name || ""}`.toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64) || "DEAL-MODEL";
+}
+
+function parameterRow(item = {}) {
+  return `<tr class="param-row">
+    <td><input class="param-key" value="${S.esc(item.key || "")}" placeholder="如 rated_power"><div class="sub param-label">${S.esc(item.label || "")}</div></td>
+    <td><input class="param-value" value="${S.esc(item.value || "")}" placeholder="如 1800"></td>
+    <td><input class="param-unit" value="${S.esc(item.unit || "")}" placeholder="如 W"></td>
+    <td><input class="param-condition" value="${S.esc(item.condition || "")}" placeholder="如 链接页面参数"></td>
+    <td><button class="btn sm" type="button" data-del-param style="color:var(--red);">删除</button></td>
+  </tr>`;
+}
+
+function openProductSync(deal) {
+  if (!deal) return;
+  const body = document.createElement("div");
+  const brand = deal.brand || "";
+  const product = deal.product || "";
+  body.innerHTML = `
+    <p class="sub" style="margin-top:0;">将资料写入知识库的“型号事实表”。再次同步同一型号编号会更新已有参数。</p>
+    <div class="form-grid">
+      <div class="form-row"><label>品牌 *</label><input id="syncBrand" value="${S.esc(brand)}"></div>
+      <div class="form-row"><label>产品型号 *</label><input id="syncModelName" value="${S.esc(product)}"></div>
+      <div class="form-row"><label>型号编号 *</label><input id="syncModelId" value="${S.esc(modelId(brand, product))}"><div class="sub">用于识别和更新同一产品</div></div>
+      <div class="form-row"><label>产品品类 *</label><input id="syncCategory" value="${S.esc(deal.category || "其他")}"></div>
+      <div class="form-row"><label>别名</label><input id="syncAliases" value="${S.esc(product)}" placeholder="多个别名用逗号分隔"></div>
+      <div class="form-row"><label>产品资料来源</label><div style="display:flex;gap:8px;"><input id="syncSource" placeholder="粘贴官网、电商页或飞书文档链接"><button type="button" class="btn sm primary" id="queryProductParams">查询网页</button><button type="button" class="btn sm" id="queryFeishuDoc">读取飞书</button></div><div class="sub">也可上传参数脚本（JSON / HTML / TXT / Markdown，仅解析文本，不执行）。</div><div style="display:flex;gap:8px;margin-top:6px;"><input id="syncScript" type="file" accept=".json,.html,.htm,.txt,.md,application/json,text/plain,text/html"><button type="button" class="btn sm" id="queryScriptParams">识别脚本</button></div><div class="sub" id="syncPreview">查询网页、读取飞书文档或识别脚本后，确认展示内容再同步。</div></div>
+    </div>
+    <div style="margin-top:12px;"><b style="font-size:13px;">核心参数 *</b>
+      <div class="table-wrap" style="margin-top:7px;border:1px solid var(--border);border-radius:8px;"><table class="data" style="min-width:700px;font-size:12px;"><thead><tr><th>参数键（英文）</th><th>参数值</th><th>单位</th><th>适用条件</th><th></th></tr></thead><tbody id="syncParams">${parameterRow()}</tbody></table></div>
+      <button type="button" class="btn sm" id="addSyncParam" style="margin-top:8px;">＋ 添加参数</button>
+    </div>
+    <div id="syncSellingPoints" style="display:none;margin-top:12px;padding:10px 12px;background:#f7f8fc;border-radius:8px;"></div>`;
+  const bindParameterButtons = () => {
+    S.$$('[data-del-param]', body).forEach(b => b.onclick = () => b.closest("tr").remove());
+  };
+  const applyPreview = data => {
+    body.querySelector("#syncSource").value = data.source_note;
+    body.querySelector("#syncBrand").value = data.brand || body.querySelector("#syncBrand").value;
+    body.querySelector("#syncModelName").value = data.model_name || body.querySelector("#syncModelName").value;
+    body.querySelector("#syncCategory").value = data.category || body.querySelector("#syncCategory").value;
+    body.querySelector("#syncModelId").value = modelId(body.querySelector("#syncBrand").value, body.querySelector("#syncModelName").value);
+    body.querySelector("#syncParams").innerHTML = (data.specs || []).map(parameterRow).join("") || parameterRow();
+    const selling = data.selling_points || [];
+    const sellingEl = body.querySelector("#syncSellingPoints");
+    sellingEl.style.display = selling.length ? "block" : "none";
+    sellingEl.innerHTML = selling.length ? `<b style="font-size:13px;">提炼卖点（已附证据）</b><ul style="margin:7px 0 0;padding-left:18px;">${selling.map(x => `<li><b>${S.esc(x.title)}</b>：${S.esc(x.evidence)}</li>`).join("")}</ul>` : "";
+    body.dataset.previewed = "1";
+    body.querySelector("#syncPreview").textContent = data.warning || `已识别 ${(data.specs || []).length} 项参数，请核对后同步。`;
+    bindParameterButtons();
+  };
+  body.querySelector("#queryProductParams").onclick = async () => {
+    const source = body.querySelector("#syncSource").value.trim();
+    if (!source) throw new Error("请先输入产品参数链接");
+    const button = body.querySelector("#queryProductParams");
+    button.disabled = true; button.textContent = "查询中…";
+    body.querySelector("#syncPreview").textContent = "正在读取并解析链接页面…";
+    try {
+      const data = await S.api(`/deals/${deal.id}/product-params-preview`, {method:"POST", body:{source_url:source}});
+      applyPreview(data);
+    } catch (e) {
+      body.querySelector("#syncPreview").textContent = `查询失败：${e.message}`;
+    } finally { button.disabled = false; button.textContent = "查询网页"; }
+  };
+  body.querySelector("#queryFeishuDoc").onclick = async () => {
+    const source = body.querySelector("#syncSource").value.trim();
+    if (!source) throw new Error("请先输入飞书文档链接");
+    const button = body.querySelector("#queryFeishuDoc");
+    button.disabled = true; button.textContent = "读取中…";
+    body.querySelector("#syncPreview").textContent = "正在读取飞书文档并提炼参数…";
+    try {
+      const data = await S.api(`/deals/${deal.id}/feishu-doc-preview`, {method:"POST", body:{source_url:source}});
+      applyPreview(data);
+    } catch (e) {
+      body.querySelector("#syncPreview").textContent = `读取失败：${e.message}`;
+    } finally { button.disabled = false; button.textContent = "读取飞书"; }
+  };
+  body.querySelector("#queryScriptParams").onclick = async () => {
+    const file = body.querySelector("#syncScript").files[0];
+    if (!file) throw new Error("请先选择参数脚本文件");
+    if (file.size > 1024 * 1024) throw new Error("参数脚本不能超过 1MB");
+    const button = body.querySelector("#queryScriptParams");
+    button.disabled = true; button.textContent = "识别中…";
+    body.querySelector("#syncPreview").textContent = "正在读取并识别参数脚本…";
+    try {
+      const content = await file.text();
+      const data = await S.api(`/deals/${deal.id}/product-params-script-preview`, {method:"POST", body:{filename:file.name, content}});
+      applyPreview(data);
+    } catch (e) {
+      body.querySelector("#syncPreview").textContent = `识别失败：${e.message}`;
+    } finally { button.disabled = false; button.textContent = "识别脚本"; }
+  };
+  body.querySelector("#syncSource").oninput = () => {
+    delete body.dataset.previewed;
+    body.querySelector("#syncPreview").textContent = "链接已变更，请重新查询后再同步。";
+  };
+  body.querySelector("#addSyncParam").onclick = () => {
+    body.querySelector("#syncParams").insertAdjacentHTML("beforeend", parameterRow());
+    bindParameterButtons();
+  };
+  bindParameterButtons();
+  S.modal({
+    title: "🧠 同步产品参数到知识库", body, wide: true, okText: "同步到知识库",
+    onOk: async () => {
+      if (!body.dataset.previewed) throw new Error("请先查询链接或识别参数脚本，并确认参数内容");
+      const specs = {};
+      S.$$(".param-row", body).forEach(row => {
+        const key = row.querySelector(".param-key").value.trim();
+        const raw = row.querySelector(".param-value").value.trim();
+        if (!key && !raw) return;
+        if (!key || !raw) throw new Error("每项参数都需要填写参数键和参数值");
+        const unit = row.querySelector(".param-unit").value.trim();
+        const condition = row.querySelector(".param-condition").value.trim();
+        specs[key] = { value: /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw,
+          ...(unit ? {unit} : {}), ...(condition ? {condition} : {}) };
+      });
+      const result = await S.api(`/deals/${deal.id}/sync-product-params`, { method: "POST", body: {
+        brand: body.querySelector("#syncBrand").value.trim(),
+        model_name: body.querySelector("#syncModelName").value.trim(),
+        model_id: body.querySelector("#syncModelId").value.trim(),
+        category: body.querySelector("#syncCategory").value.trim(),
+        aliases: body.querySelector("#syncAliases").value.trim(),
+        source_note: body.querySelector("#syncSource").value.trim(), specs,
+      }});
+      S.toast(result.action === "updated" ? "产品参数已更新到知识库" : "产品参数已同步到知识库", "ok");
+    },
+  });
 }
 
 S.$("searchBtn").onclick = () => { page = 1; load(); };

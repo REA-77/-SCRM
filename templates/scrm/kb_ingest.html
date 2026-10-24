@@ -1,0 +1,230 @@
+{% extends "scrm/base.html" %}
+{% block title %}文档同步入库{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h2>📥 文档同步入库</h2>
+    <div class="sub">读网页 / 飞书文档 / 粘贴文本 → AI 结构化提取 → 预览确认 → 写入知识库表</div>
+  </div>
+  <div class="actions"><a class="btn" href="/scrm/kb">← 返回知识库</a></div>
+</div>
+
+<div class="card">
+  <div class="form-grid" style="grid-template-columns:1fr;">
+    <div class="form-row"><label>目标表 *</label>
+      <select id="targetTable">
+        <option value="model_facts">型号事实表（model_facts · 落 pending 待确认）</option>
+        <option value="category_pain_points">产品类目痛点表（category_pain_points）</option>
+        <option value="category_pain_point_params">痛点参数证据表（category_pain_point_params）</option>
+        <option value="glossary">术语库（glossary）</option>
+        <option value="misconception">认知纠正库（misconception）</option>
+        <option value="banned_phrase">禁用句（banned_phrase）</option>
+        <option value="guardrails">硬红线（guardrails）</option>
+      </select>
+    </div>
+    <div class="form-row"><label>来源类型 *</label>
+      <select id="sourceType">
+        <option value="url">网页链接（官网产品页等）</option>
+        <option value="feishu">飞书文档（docx / wiki）</option>
+        <option value="text">粘贴文本</option>
+      </select>
+    </div>
+    <div class="form-row" id="sourceUrlRow"><label>来源链接 *</label><input id="sourceInput" placeholder="粘贴链接"></div>
+    <div class="form-row" id="sourceTextRow" style="display:none;"><label>资料原文 *</label>
+      <textarea id="sourceText" rows="8" placeholder="粘贴产品资料 / 参数脚本 / 术语表等原文"></textarea></div>
+    <div class="form-row"><label>图片识别（OCR）</label>
+      <div style="display:flex;gap:8px;">
+        <input id="ocrFile" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" style="flex:1;">
+        <button type="button" class="btn sm" id="ocrBtn">📷 识别图片</button>
+      </div>
+      <div class="sub" id="ocrStatus">上传参数页/说明书的截图，识别后自动填入「资料原文」，走正常提取流程。</div>
+    </div>
+    <div class="form-row"><label>参考提示</label>
+      <div style="display:flex;gap:8px;">
+        <input id="hintBrand" placeholder="品牌（歧义时优先）" style="flex:1;">
+        <input id="hintModel" placeholder="产品型号" style="flex:1;">
+        <input id="hintCategory" placeholder="品类" style="flex:1;">
+      </div>
+      <div class="sub">型号事实表用于消歧；类目痛点表可填写品类作为参考；其他表可留空</div>
+    </div>
+    <div class="form-row"><label>自动搜索</label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button type="button" class="btn sm primary" id="searchBtn">🔎 搜索官网参数页</button>
+        <span class="sub" id="searchStatus">按上方品牌+型号搜索官网产品页，点选候选后自动填入链接。</span>
+      </div>
+    </div>
+  </div>
+  <div style="margin-top:12px;">
+    <button class="btn primary" id="previewBtn">🔍 提取预览</button>
+    <span class="sub" id="statusLine">先选目标表和来源，提取后核对再入库。</span>
+  </div>
+</div>
+
+<div class="card" id="searchCard" style="display:none;">
+  <div class="sub2" id="searchInfo"></div>
+  <div id="searchResults" style="margin-top:8px;"></div>
+</div>
+
+<div class="card" id="previewCard" style="display:none;">
+  <div class="sub2" id="sourceInfo"></div>
+  <div class="table-wrap" style="margin-top:8px;">
+    <table class="data" id="previewTable"><thead><tr><th>预览</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div class="form-row" style="margin-top:10px;"><label>待入库数据（可直接修改 JSON 后入库）</label>
+    <textarea id="rowsJson" rows="14" class="mono" style="font-size:12px;"></textarea></div>
+  <div style="margin-top:10px;">
+    <button class="btn primary" id="applyBtn">✅ 同步入库</button>
+    <span class="sub" id="applyStatus"></span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const $ = S.$;
+let lastSourceInfo = null;
+
+const FIELD_ORDER = {
+  model_facts: ["model_id","brand","model_name","aliases","category","launch_date","price_min","price_max","price_step","specs","known_issues","verified_at"],
+  category_pain_points: ["pain_point_id","category","pain_point","trigger_words","description","reply_guidance","priority","state"],
+  category_pain_point_params: ["pain_point_id","param_key","param_name","param_aliases","evidence_rule","interpretation","sort_order","state"],
+  glossary: ["term","alias","unit","define","read","trap","standard_version","updated_at"],
+  misconception: ["topic_id","trigger_words","trigger_synonyms","priority","truth","condition","exception","tpl_by_level","needs_human","verified_at"],
+  banned_phrase: ["phrase","scope","up_id","note","created_ts"],
+  guardrails: ["rule_id","gtype","trigger_pattern","action","rewrite_to","note","enabled"],
+};
+
+const SHORT_VAL = v => {
+  if (v === null || v === undefined || v === "") return '<span class="muted">—</span>';
+  if (typeof v === "object") return `<span class="mono" style="font-size:11px;">${S.esc(JSON.stringify(v)).slice(0, 160)}</span>`;
+  return S.esc(String(v).slice(0, 160));
+};
+
+(() => {
+  const qs = new URLSearchParams(location.search);
+  const t = qs.get("table");
+  if (t && [...$("targetTable").options].some(o => o.value === t)) $("targetTable").value = t;
+})();
+
+$("sourceType").onchange = () => {
+  const isText = $("sourceType").value === "text";
+  $("sourceUrlRow").style.display = isText ? "none" : "";
+  $("sourceTextRow").style.display = isText ? "" : "none";
+};
+
+$("ocrBtn").onclick = async () => {
+  const file = $("ocrFile").files[0];
+  if (!file) throw new Error("请先选择图片文件");
+  if (file.size > 15 * 1024 * 1024) throw new Error("图片不能超过 15MB");
+  const btn = $("ocrBtn");
+  btn.disabled = true; btn.textContent = "识别中…";
+  $("ocrStatus").textContent = "正在识别图片文字（首次约 2-5 秒）…";
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const resp = await fetch("/scrm/api/kb/ingest/ocr", { method: "POST", body: fd });
+    const d = await resp.json();
+    if (!resp.ok) throw new Error(d.error || "OCR 识别失败");
+    $("sourceType").value = "text";
+    $("sourceType").dispatchEvent(new Event("change"));
+    $("sourceText").value = ($("sourceText").value.trim() ? $("sourceText").value.trimEnd() + "\n" : "") + d.text;
+    $("ocrStatus").textContent = `识别完成（${d.chars} 字），已填入「资料原文」，核对后点「提取预览」。`;
+  } catch (e) {
+    $("ocrStatus").textContent = `识别失败：${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = "📷 识别图片";
+  }
+};
+
+$("searchBtn").onclick = async () => {
+  const brand = $("hintBrand").value.trim();
+  const model = $("hintModel").value.trim();
+  const category = $("hintCategory").value.trim();
+  if (!brand || !model) throw new Error("请先在参考提示里填写品牌和产品型号（品类建议也填上，可避免搜错品类）");
+  const btn = $("searchBtn");
+  btn.disabled = true; btn.textContent = "搜索中…";
+  $("searchStatus").textContent = "正在搜索官网参数页…";
+  $("searchCard").style.display = "none";
+  try {
+    const d = await S.api("/kb/ingest/search", { method: "POST", body: { brand, model_name: model, category } });
+    $("searchStatus").textContent = `找到 ${d.candidates.length} 个候选${d.domains.length ? "（已识别官网域名: " + d.domains.join(" / ") + "）" : ""}。`;
+    $("searchInfo").textContent = d.note || "";
+    $("searchResults").innerHTML = d.candidates.map((c, i) => `
+      <div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border);">
+        <div style="flex:1;min-width:0;">
+          <div>${c.official ? S.badge("官网", "green") + " " : ""}<b>${S.esc(c.title)}</b></div>
+          <div class="sub2 mono" style="word-break:break-all;">${S.esc(c.url)}</div>
+          ${c.abstract ? `<div class="sub2">${S.esc(c.abstract)}</div>` : ""}
+        </div>
+        <button class="btn sm" data-url="${S.esc(c.url)}">使用此链接</button>
+      </div>`).join("") || `<div class="muted">没有找到候选页面，可手动粘贴链接或改用粘贴文本。</div>`;
+    S.$$("#searchResults [data-url]").forEach(b => b.onclick = () => {
+      $("sourceType").value = "url";
+      $("sourceType").dispatchEvent(new Event("change"));
+      $("sourceInput").value = b.dataset.url;
+      $("statusLine").textContent = "链接已填入，点击「提取预览」开始识别。";
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+    $("searchCard").style.display = "";
+  } catch (e) {
+    $("searchStatus").textContent = `搜索失败：${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = "🔎 搜索官网参数页";
+  }
+};
+
+$("previewBtn").onclick = async () => {
+  const body = {
+    target_table: $("targetTable").value,
+    source_type: $("sourceType").value,
+    source: $("sourceType").value === "text" ? $("sourceText").value : $("sourceInput").value.trim(),
+    hints: { brand: $("hintBrand").value.trim(), model_name: $("hintModel").value.trim(), category: $("hintCategory").value.trim() },
+  };
+  const btn = $("previewBtn");
+  btn.disabled = true; btn.textContent = "提取中…（网页/飞书读取 + AI 提取，约 10-30 秒）";
+  $("statusLine").textContent = "正在读取并提取…";
+  $("previewCard").style.display = "none";
+  try {
+    const d = await S.api("/kb/ingest/preview", { method: "POST", body });
+    $("statusLine").textContent = `提取到 ${d.count} 行，已定位到预览数据，请核对后入库。`;
+    lastSourceInfo = d.source_info || {};
+    const info = lastSourceInfo;
+    $("sourceInfo").textContent = `来源：${info.source_type || ""} ${info.url || ""} ${info.title || "（无标题）"} · 原文 ${info.chars ?? "?"} 字 · 提取模型 ${info.extractor || ""}` + (d.warning ? ` · ⚠ ${d.warning}` : "");
+    const order = FIELD_ORDER[$("targetTable").value] || [];
+    $("previewTable").querySelector("thead tr").innerHTML =
+      `<th style="width:130px;">#</th>` + order.map(k => `<th>${S.esc(k)}</th>`).join("");
+    $("previewTable").querySelector("tbody").innerHTML = d.rows.map((row, i) =>
+      `<tr><td class="nowrap muted">${i + 1}</td>` + order.map(k => `<td>${SHORT_VAL(row[k])}</td>`).join("") + "</tr>"
+    ).join("") || `<tr><td colspan="${order.length + 1}" class="muted">无数据</td></tr>`;
+    $("rowsJson").value = JSON.stringify(d.rows, null, 2);
+    $("applyStatus").textContent = "";
+    $("previewCard").style.display = "";
+    // 提取结果在表单下方，自动滚动到预览区域，避免用户误以为数据没有展示。
+    requestAnimationFrame(() => $("previewCard").scrollIntoView({ behavior: "smooth", block: "start" }));
+  } catch (e) {
+    $("statusLine").textContent = `提取失败：${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = "🔍 提取预览";
+  }
+};
+
+$("applyBtn").onclick = async () => {
+  let rows;
+  try { rows = JSON.parse($("rowsJson").value); }
+  catch { throw new Error("待入库数据不是合法 JSON"); }
+  if (!Array.isArray(rows) || !rows.length) throw new Error("没有要入库的行");
+  const btn = $("applyBtn");
+  btn.disabled = true; btn.textContent = "入库中…";
+  try {
+    const d = await S.api("/kb/ingest/apply", { method: "POST",
+      body: { target_table: $("targetTable").value, rows, source_info: lastSourceInfo } });
+    $("applyStatus").textContent = d.note
+      ? `完成：共 ${d.total} 行。${d.note}`
+      : `完成：新增 ${d.inserted ?? 0} 行，更新 ${d.updated ?? 0} 行` + (d.skipped ? `，跳过 ${d.skipped} 行` : "") + `，共 ${d.total} 行。`;
+    S.toast("同步入库完成", "ok");
+  } finally {
+    btn.disabled = false; btn.textContent = "✅ 同步入库";
+  }
+};
+</script>
+{% endblock %}

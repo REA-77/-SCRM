@@ -279,7 +279,7 @@ function render() {
     <td class="mono">${fmtFans(r.fans)}</td>
     <td>${statusBadge(r.status)}</td>
     <td data-cookie-index="${i}">${cookieBadge(r)}</td>
-    <td class="mono">${r.video_count > 0 ? `<a href="/scrm/videos?platform=${encodeURIComponent(r.platform)}&up=${encodeURIComponent(r.nickname || "")}" style="color:#4f46e5;">${r.video_count}</a>` : "—"}</td>
+    <td class="mono">${r.video_count > 0 ? `<a href="/scrm/videos?platform=${encodeURIComponent(r.platform)}&up=${encodeURIComponent(r.nickname || "")}" style="color:var(--primary);">${r.video_count}</a>` : "—"}</td>
     <td class="mono" style="font-size:12px;">${r.latest_update_ts ? S.fmtTs(r.latest_update_ts) : "—"}</td>
     <td class="mono">${r.month_video_count > 0 ? r.month_video_count.toLocaleString() : "—"}</td>
     <td class="mono" style="font-size:12px;">${S.esc(r.bit_window || "—")}</td>

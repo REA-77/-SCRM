@@ -6,11 +6,19 @@
 <title>{% block title %}SCRM 工作台{% endblock %} · 觅牛文化</title>
 <link rel="stylesheet" href="/static/scrm/app.css">
 </head>
-<body data-active="{{ active }}">
+<body class="theme-night" data-active="{{ active }}">
+<script>
+  try { if (localStorage.getItem("scrm.theme") === "light") document.body.classList.remove("theme-night"); } catch (_) {}
+</script>
 <header class="topbar">
   <a href="/scrm/" class="logo">🛡 觅牛文化 SCRM <span class="tag">MVP</span></a>
   <span class="muted" style="font-size:12.5px;">评论监控 · 智能分析 · 线索跟进 · 品牌触达</span>
   <div class="spacer"></div>
+  <div class="theme-switch" role="group" aria-label="界面主题">
+    <button class="theme-btn" type="button" data-theme-toggle="light" aria-pressed="false">浅色</button>
+    <button class="theme-btn" type="button" data-theme-toggle="dark" aria-pressed="true">深色</button>
+  </div>
+  {% if current_user %}<span class="muted" style="font-size:13px">👤 {{ current_user.name }}</span><form method="post" action="/scrm/logout" style="margin:0"><button class="nav-link" type="submit">退出登录</button></form>{% endif %}
   <a class="nav-link" href="/" target="_blank">📊 数据总库</a>
 </header>
 
@@ -30,6 +38,7 @@
     <a class="nav-item" data-key="workbench" href="/scrm/analysis"><span class="ico">🤖</span>智能分析工作台</a>
     <a class="nav-item" data-key="auto_tasks" href="/scrm/auto-tasks"><span class="ico">▶</span>自动操作任务</a>
     <a class="nav-item" data-key="skills" href="/scrm/skills"><span class="ico">🎭</span>人设 Skill</a>
+    <a class="nav-item" data-key="kb" href="/scrm/kb"><span class="ico">🧠</span>知识库</a>
 
     <div class="group-label">线索跟进工作流</div>
     <a class="nav-item" data-key="leads_overview" href="/scrm/leads/overview"><span class="ico">🧭</span>线索总览</a>
@@ -45,6 +54,9 @@
 
     <div class="group-label">系统设置</div>
     <a class="nav-item" data-key="settings" href="/scrm/settings"><span class="ico">⚙️</span>设置管理</a>
+    <a class="nav-item" data-key="categories" href="/scrm/categories"><span class="ico">🏷️</span>品类管理</a>
+    <a class="nav-item" data-key="brand_management" href="/scrm/brand-management"><span class="ico">🏷️</span>品牌管理</a>
+    <a class="nav-item" data-key="permission_management" href="/scrm/permission-management"><span class="ico">🛡️</span>权限管理</a>
   </aside>
 
   <main class="content">
@@ -60,6 +72,37 @@
     document.querySelectorAll(".side .nav-item").forEach(a => {
       if (a.dataset.key === active) a.classList.add("active");
     });
+  })();
+
+  // 列表筛选条件按页面缓存，离开后再次进入时自动恢复。
+  // 使用 pathname 隔离不同页面，避免评论、视频、商单等筛选条件互相覆盖。
+  (() => {
+    const key = `scrm.filter-cache:${location.pathname}`;
+    const fields = () => Array.from(document.querySelectorAll('.filter-bar input[id], .filter-bar select[id]'));
+    const save = () => {
+      const data = {};
+      fields().forEach(el => { data[el.id] = el.value; });
+      try { localStorage.setItem(key, JSON.stringify(data)); } catch (_) {}
+    };
+    const restore = () => {
+      let data = {};
+      try { data = JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (_) {}
+      fields().forEach(el => {
+        if (Object.prototype.hasOwnProperty.call(data, el.id) && !new URLSearchParams(location.search).has(el.id)) {
+          el.value = data[el.id] ?? '';
+        }
+        el.addEventListener('input', save);
+        el.addEventListener('change', save);
+      });
+      const reset = document.querySelector('.filter-bar #resetBtn');
+      if (reset) reset.addEventListener('click', () => setTimeout(() => {
+        try { localStorage.removeItem(key); } catch (_) {}
+      }, 0));
+      const search = document.querySelector('.filter-bar #searchBtn');
+      if (search) search.addEventListener('click', save);
+    };
+    restore();
+    window.addEventListener('beforeunload', save);
   })();
 </script>
 {% block scripts %}{% endblock %}

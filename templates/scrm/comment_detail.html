@@ -88,6 +88,7 @@ function render() {
             ${r.analyzed ? S.badge("已分析", "green", true) : S.badge("待分析", "gray", true)}
             ${r.neg ? S.badge("负面预警", "red", true) : S.badge("情感正常", "green")}
             ${r.intent ? S.badge("购买意向", "amber", true) : S.badge("无购买意向", "gray")}
+            ${r.comment_type ? S.badge(`类型：${S.esc(r.comment_type)}`, "teal") : ""}
             ${r.handled ? S.badge("人工已处理", "teal", true) : S.badge("未处理", "gray")}
             ${r.delreq ? S.badge("已请求删除", "red", true) : ""}
             <button class="btn sm" style="margin-left:auto;" onclick="tagCorrectModal()">✏️ 人工修正</button>

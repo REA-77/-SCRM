@@ -109,7 +109,7 @@ def ensure_comment_columns():
 
 
 def ensure_content_category_columns():
-    """为所有内容/视频表补齐分类和原链接字段。"""
+    """为所有内容/视频表补齐分类、原链接和产品名称字段。"""
     added = []
     for table in CONTENT_TABLES:
         try:
@@ -122,6 +122,12 @@ def ensure_content_category_columns():
             missing.append("ADD COLUMN `category` VARCHAR(16) NOT NULL DEFAULT '原创' COMMENT '视频分类:商单/原创'")
         if "original_url" not in existing:
             missing.append("ADD COLUMN `original_url` VARCHAR(500) NULL COMMENT '原链接'")
+        if "product_name" not in existing:
+            missing.append("ADD COLUMN `product_name` VARCHAR(512) NULL COMMENT '产品名称: 品牌+产品+型号'")
+        if "product_checked_ts" not in existing:
+            missing.append("ADD COLUMN `product_checked_ts` BIGINT NULL COMMENT '原创产品 OCR 识别时间'")
+        if "product_reviewed" not in existing:
+            missing.append("ADD COLUMN `product_reviewed` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '原创产品名称是否已人工审核'")
         if not missing:
             continue
         try:
@@ -130,7 +136,36 @@ def ensure_content_category_columns():
                     for statement in missing:
                         cur.execute(f"ALTER TABLE `{table}` {statement}")
                 conn.commit()
-            added.extend(f"{table}.{name}" for name in ("category", "original_url") if name not in existing)
+            added.extend(f"{table}.{name}" for name in ("category", "original_url", "product_name", "product_checked_ts", "product_reviewed") if name not in existing)
         except Exception as e:
             logger.error("为内容表 %s 添加 category 失败: %s", table, e)
     return added
+
+
+def mark_self_replies_handled():
+    """将评论人等于内容作者的本人回复自动标记为已处理，返回本次更新数。"""
+    from scrm_components.platforms import COMMENT_TABLES_ENABLED, PLATFORM_MAP
+
+    total = 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for table in COMMENT_TABLES_ENABLED:
+                mapping = PLATFORM_MAP[table]
+                # 内容表表达式中的列需要带 v. 前缀，避免 JOIN 中与评论表同名列歧义。
+                author_expr = (mapping["cnick"].replace("`nickname`", "v.`nickname`")
+                               .replace("`user_nickname`", "v.`user_nickname`")
+                               .replace("creator_hash", "v.`creator_hash`"))
+                try:
+                    total += cur.execute(
+                        f"UPDATE `{table}` c JOIN `{mapping['ctable']}` v "
+                        f"ON c.`{mapping['cid']}`=v.`{mapping['cid']}` "
+                        f"SET c.`handled`=1 "
+                        f"WHERE IFNULL(c.`handled`,0)=0 "
+                        f"AND NULLIF(TRIM(CAST(c.`{mapping['nick']}` AS CHAR)), '') IS NOT NULL "
+                        f"AND TRIM(CAST(c.`{mapping['nick']}` AS CHAR))="
+                        f"TRIM(CAST({author_expr} AS CHAR))"
+                    )
+                except Exception as exc:
+                    logger.warning("标记 %s 本人回复为已处理失败: %s", table, exc)
+        conn.commit()
+    return total

@@ -153,58 +153,34 @@ function render() {
 }
 
 function bindModal(r) {
-  // 该 UP主 当前已绑定的 Skill(一个 Skill 只绑一位 UP主,反之可能多个)
-  const linked = skills.filter(x => x.bind_up === r.name);
-  const cur = linked[0] || null;
-  const PLATS = ["", "抖音", "视频号", "小红书", "B站", "快手", "微博", "知乎"];
+  const rid = Number(r.id);
+  const linked = skills.filter(x => (x.bound_up_ids || []).includes(rid));
+  const available = skills.filter(x => !(x.bound_up_ids || []).includes(rid));
   const dlg = S.modal({
-    title: cur ? `Skill 详情 · ${r.name}` : `新增 Skill · ${r.name}`,
+    title: `绑定 Skill · ${r.name}`,
     body: `
-      ${cur ? `
       <div class="form-row"><label>当前绑定</label>
         <div>${linked.map(s => `<span class="badge primary">🧩 ${S.esc(s.name)}</span>`).join(" ")}
-          ${linked.length > 1 ? `<span class="sub2">共 ${linked.length} 个,此处编辑首个</span>` : ""}</div></div>`
-      : `
-      <div class="form-row"><label>所属 UP主</label>
-        <div><b>${S.esc(r.name)}</b>
-          <div class="sub2">保存后将新建 Skill 并自动绑定该 UP主,同步至人设 Skill 管理页</div></div></div>`}
-      <div class="form-grid">
-        <div class="form-row"><label>Skill 名称 *</label>
-          <input id="bName" value="${S.esc(cur ? cur.name : "")}" placeholder="如:家电老炮·老王"></div>
-        <div class="form-row"><label>平台</label>
-          <select id="bPlatform">
-            ${PLATS.map(p => `<option ${p === (cur ? (cur.platform || "") : "") ? "selected" : ""}>${p || "通用"}</option>`).join("")}
-          </select></div>
-      </div>
-      <div class="form-row"><label>人设风格描述</label>
-        <textarea id="bStyle" placeholder="如:直爽专业的拆机党,喜欢用实测数据说话">${S.esc(cur ? (cur.style || "") : "")}</textarea></div>
-      <div class="form-row"><label>示例回复</label>
-        <textarea id="bExample" placeholder="一条符合该人设的典型回复">${S.esc(cur ? (cur.example || "") : "")}</textarea></div>
-      ${cur ? `<div class="form-row" style="margin-top:4px;">
-        <button type="button" class="btn sm danger" id="bUnbind">🔓 解除该 UP主绑定</button></div>` : ""}`,
-    okText: cur ? "保存修改" : "创建并绑定",
+          ${linked.length ? "" : '<span class="muted">未绑定</span>'}</div></div>
+      <div class="form-row"><label>选择已有 Skill</label>
+        <select id="bSkill"><option value="">请选择 Skill</option>${available.map(s => `<option value="${s.id}">${S.esc(s.name)}</option>`).join("")}</select>
+        <div class="sub2">一个 Skill 可同时绑定多个 UP 主（1对多），因此列表包含已绑给其他 UP 的 Skill；人设参数请在人设 Skill 管理页维护。</div></div>
+      ${linked.length ? `<div class="form-row" style="margin-top:4px;">${linked.map(s => `<button type="button" class="btn sm danger" data-unbind="${s.id}">🔓 解除 ${S.esc(s.name)}</button>`).join(" ")}</div>` : ""}`,
+    okText: "绑定所选 Skill",
     onOk: async (b) => {
-      const payload = {
-        id: cur ? cur.id : null,
-        name: b.querySelector("#bName").value.trim(),
-        platform: b.querySelector("#bPlatform").value,
-        bind_up: r.name,
-        style: b.querySelector("#bStyle").value.trim(),
-        example: b.querySelector("#bExample").value.trim(),
-      };
-      if (!payload.name) { S.toast("请填写 Skill 名称", "err"); return false; }
-      await S.api("/skills/save", { method: "POST", body: payload });
-      S.toast(cur ? "Skill 已更新" : "已创建 Skill 并绑定", "ok");
+      const skillId = b.querySelector("#bSkill").value;
+      if (!skillId) { S.toast("请选择已有 Skill", "err"); return false; }
+      await S.api("/creators/bind", { method: "POST", body: { skill_id: Number(skillId), up_id: rid } });
+      S.toast("Skill 已绑定", "ok");
       loadSkills(); load();
     },
   });
-  const ub = dlg.bodyEl.querySelector("#bUnbind");
-  if (ub) ub.onclick = async () => {
-    await S.api("/creators/bind", { method: "POST", body: { skill_id: cur.id, creator: "" } });
+  dlg.bodyEl.querySelectorAll("[data-unbind]").forEach(ub => ub.onclick = async () => {
+    await S.api("/creators/bind", { method: "POST", body: { skill_id: Number(ub.dataset.unbind), up_id: rid, unbind: true } });
     S.toast("已解绑", "ok");
     dlg.close();
     loadSkills(); load();
-  };
+  });
 }
 
 function editModal(r = { status: "active" }) {

@@ -1,0 +1,52 @@
+{% extends "scrm/base.html" %}
+{% block title %}权限管理{% endblock %}
+{% block content %}
+<div class="page-head"><div><h2>🛡️ 权限管理</h2><div class="sub">通过角色统一划分页面、字段及操作权限；账户名称仅支持中文，密码必须包含字母和数字。</div></div></div>
+<div class="tabs" style="margin-bottom:16px"><button class="btn primary" data-tab="roles">角色管理</button> <button class="btn" data-tab="users">账户密码管理</button></div>
+<section id="rolesPanel"><div class="page-head"><div><h3>角色列表</h3></div><button class="btn primary" id="addRole">➕ 新增角色</button></div><div class="card" style="padding:0"><div class="table-wrap"><table class="data"><thead><tr><th>角色</th><th>说明</th><th>已配置权限</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="roleBody"></tbody></table></div></div></section>
+<section id="usersPanel" style="display:none"><div class="page-head"><div><h3>系统账户</h3></div><button class="btn primary" id="addUser">➕ 新增账户</button></div><div class="card" style="padding:0"><div class="table-wrap"><table class="data"><thead><tr><th>账户名称</th><th>初始密码</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="userBody"></tbody></table></div></div></section>
+{% endblock %}
+{% block scripts %}<script>
+let roles=[],users=[],catalog={};
+function roleModal(row={}){S.modal({title:row.id?'编辑角色':'新增角色',body:`<div class="form-row"><label>角色名称</label><input id="roleName" value="${S.esc(row.name||'')}"></div><div class="form-row"><label>角色说明</label><textarea id="roleDesc">${S.esc(row.description||'')}</textarea></div>`,okText:'保存',onOk:async b=>{let name=b.querySelector('#roleName').value.trim();if(!name)throw Error('角色名称必填');await S.api('/roles/save',{method:'POST',body:{id:row.id,name,description:b.querySelector('#roleDesc').value.trim()}});S.toast('角色已保存','ok');loadRoles();}})}
+const pageModule={overview:'overview',comments:'comments',comment_detail:'comments',alerts:'comments',reply:'comments',videos:'videos',workbench:'workbench',auto_tasks:'auto_tasks',skills:'skills',kb:'kb',kb_table:'kb',kb_ingest:'kb',creators:'creators',accounts:'accounts',account_management:'accounts',leads_overview:'leads',leads:'leads',lead_detail:'leads',lead_workflow:'leads',lead_alerts:'leads',brands:'brands',brand_detail:'brands',brand_funnel:'brands',inquiries:'inquiries',deals:'deals',deal_detail:'deals',media:'media',business_wechat:'settings',settings:'settings',categories:'settings',brand_management:'settings','permission-management':'admin'};
+function moduleOf(key){return key==='users'||key==='roles'?'admin':key.split('.')[0]}
+function permissionChecks(type,items,chosen){return items.map(x=>`<label style="display:inline-flex;align-items:center;margin:5px 18px 5px 0;gap:5px"><input type="checkbox" data-type="${type}" data-key="${x.key}" ${chosen.has(type+'|'+x.key)?'checked':''}>${S.esc(x.label)}</label>`).join('')}
+async function permissionModal(row){
+  const d=await S.api('/roles/'+row.id+'/permissions');
+  const chosen=new Set((d.permissions||[]).filter(x=>x.allowed).map(x=>x.permission_type+'|'+x.permission_key));
+  const modal=S.modal({title:'配置权限 · '+row.name,wide:true,body:'<div class="sub" style="margin-bottom:12px">按页面配置对应字段和操作；每一列均可多选。</div><div class="table-wrap"><table class="data"><thead><tr><th style="width:180px">页面</th><th>可见字段（多选）</th><th>可执行操作（多选）</th></tr></thead><tbody id="permissionRows"></tbody></table></div>',okText:'保存权限',onOk:async b=>{syncLive(b);const permissions=[...chosen].map(v=>{const [type,key]=v.split('|');return {type,key}});await S.api('/roles/'+row.id+'/permissions',{method:'POST',body:{permissions}});S.toast('权限已保存','ok');loadRoles();}});
+  const body=modal.bodyEl,tbody=body.querySelector('#permissionRows');
+  const syncLive=root=>root.querySelectorAll('input[data-type]').forEach(x=>{const value=x.dataset.type+'|'+x.dataset.key;if(x.checked)chosen.add(value);else chosen.delete(value)});
+  const checked=(type,key)=>chosen.has(type+'|'+key)?'checked':'';
+  const choices=(type,items)=>items.length?items.map(x=>`<label style="display:inline-flex;align-items:center;margin:3px 12px 3px 0;gap:5px;white-space:nowrap"><input type="checkbox" data-type="${type}" data-key="${x.key}" ${checked(type,x.key)}>${S.esc(x.label)}</label>`).join(''):'<span class="muted">—</span>';
+  const batchTools=(type,mod,items)=>items.length?`<div style="margin-bottom:5px"><button type="button" class="btn sm" data-select-all="${type}" data-module="${mod}">全选</button> <button type="button" class="btn sm" data-clear-all="${type}" data-module="${mod}">清空</button></div>`:'';
+  const pageGroups=(catalog.page||[]).reduce((all,page)=>{const mod=pageModule[page.key]||page.key;(all[mod]||(all[mod]=[])).push(page);return all},{});
+  const moduleStillSelected=mod=>[...tbody.querySelectorAll('input[data-type="page"]:checked')].some(x=>pageModule[x.dataset.key]===mod);
+  const render=()=>{
+    tbody.innerHTML=Object.entries(pageGroups).map(([mod,pages])=>{
+      const enabled=pages.some(page=>chosen.has('page|'+page.key));
+      const fields=(catalog.field||[]).filter(x=>moduleOf(x.key)===mod),actions=(catalog.action||[]).filter(x=>moduleOf(x.key)===mod);
+      const pageChoices=pages.map(page=>`<label style="display:flex;align-items:center;gap:7px;margin:3px 0;font-weight:600"><input type="checkbox" data-type="page" data-key="${page.key}" ${checked('page',page.key)}> ${S.esc(page.label)}</label>`).join('');
+      return `<tr><td>${batchTools('page',mod,pages)}${pageChoices}</td><td>${enabled?batchTools('field',mod,fields)+choices('field',fields):'<span class="muted">请先勾选页面</span>'}</td><td>${enabled?batchTools('action',mod,actions)+choices('action',actions):'<span class="muted">请先勾选页面</span>'}</td></tr>`;
+    }).join('');
+    tbody.querySelectorAll('input[data-type="page"]').forEach(x=>x.onchange=()=>{
+      syncLive(body);const mod=pageModule[x.dataset.key];
+      if(!moduleStillSelected(mod)) [...chosen].forEach(v=>{const [,key]=v;if(moduleOf(key)===mod)chosen.delete(v)});
+      render();
+    });
+    tbody.querySelectorAll('[data-select-all],[data-clear-all]').forEach(btn=>btn.onclick=()=>{
+      syncLive(body);const type=btn.dataset.selectAll||btn.dataset.clearAll,mod=btn.dataset.module;
+      const items=type==='page'?pageGroups[mod]:(catalog[type]||[]).filter(x=>moduleOf(x.key)===mod);
+      if(btn.dataset.selectAll) items.forEach(x=>chosen.add(type+'|'+x.key));
+      else { items.forEach(x=>chosen.delete(type+'|'+x.key)); if(type==='page') [...chosen].forEach(v=>{const [itemType,key]=v;if(moduleOf(key)===mod)chosen.delete(itemType+'|'+key)}) }
+      render();
+    });
+  };
+  render();
+}
+function renderRoles(){S.$('roleBody').innerHTML=roles.map(r=>`<tr><td>${S.esc(r.name)} ${r.built_in?S.badge('内置','blue'):''}</td><td>${S.esc(r.description||'—')}</td><td>${r.permission_count||0} 项</td><td>${S.fmtTs(r.updated_ts)}</td><td><button class="btn sm" data-perm="${r.id}">权限配置</button> <button class="btn sm" data-edit-role="${r.id}">编辑</button></td></tr>`).join('')||'<tr><td colspan="5" class="muted">暂无角色</td></tr>';S.$$('[data-perm]').forEach(b=>b.onclick=()=>permissionModal(roles.find(x=>x.id==b.dataset.perm)));S.$$('[data-edit-role]').forEach(b=>b.onclick=()=>roleModal(roles.find(x=>x.id==b.dataset.editRole)))}
+function userModal(row={}){let opts=roles.filter(r=>r.status==='active').map(r=>`<option value="${r.id}" ${(String(row.role_ids||'').split(',').includes(String(r.id)))?'selected':''}>${S.esc(r.name)}</option>`).join('');S.modal({title:row.id?'编辑账户':'新增账户',body:`<div class="form-row"><label>账户名称</label><input id="userName" value="${S.esc(row.name||'')}" placeholder="2–16 个中文字符"></div><div class="form-row"><label>${row.id?'新密码（不修改请留空）':'密码'}</label><input id="userPassword" type="password" placeholder="8–32 位，必须包含字母和数字"></div><div class="form-row"><label>角色</label><select id="userRoles" multiple size="${Math.min(5,Math.max(2,roles.length))}">${opts}</select><div class="sub">按住 Ctrl 可选择多个角色</div></div>`,okText:'保存',onOk:async b=>{let password=b.querySelector('#userPassword').value,role_ids=[...b.querySelector('#userRoles').selectedOptions].map(x=>Number(x.value));await S.api('/system-users/save',{method:'POST',body:{id:row.id,name:b.querySelector('#userName').value.trim(),password,role_ids}});S.toast('账户已保存','ok');loadUsers();}})}
+function renderUsers(){S.$('userBody').innerHTML=users.map(u=>`<tr><td>${S.esc(u.name)}</td><td>${u.has_initial_password?`<span data-password-value="${u.id}">••••••••</span> <button class="btn sm" data-show-password="${u.id}" title="查看初始密码" aria-label="查看初始密码">👁</button>`:'<span class="muted">—</span>'}</td><td>${S.esc(u.role_names||'未分配')}</td><td>${S.badge(u.status==='active'?'启用':'停用',u.status==='active'?'green':'gray')}</td><td>${S.fmtTs(u.updated_ts)}</td><td><button class="btn sm" data-edit-user="${u.id}">编辑</button> <button class="btn sm ${u.status==='active'?'danger':''}" data-status="${u.id}">${u.status==='active'?'停用':'启用'}</button></td></tr>`).join('')||'<tr><td colspan="6" class="muted">暂无账户</td></tr>';S.$$('[data-show-password]').forEach(b=>b.onclick=async()=>{const value=S.$(`[data-password-value="${b.dataset.showPassword}"]`);if(value.dataset.revealed==='1'){value.textContent='••••••••';value.dataset.revealed='0';b.textContent='👁';return}const d=await S.api(`/system-users/${b.dataset.showPassword}/initial-password`);value.textContent=d.password;value.dataset.revealed='1';b.textContent='🙈';});S.$$('[data-edit-user]').forEach(b=>b.onclick=()=>userModal(users.find(x=>x.id==b.dataset.editUser)));S.$$('[data-status]').forEach(b=>b.onclick=async()=>{let u=users.find(x=>x.id==b.dataset.status);await S.api('/system-users/status',{method:'POST',body:{id:u.id,status:u.status==='active'?'disabled':'active'}});S.toast('账户状态已更新','ok');loadUsers();})}
+async function loadRoles(){roles=(await S.api('/roles')).rows||[];renderRoles()}async function loadUsers(){users=(await S.api('/system-users')).rows||[];renderUsers()}S.$$('[data-tab]').forEach(b=>b.onclick=()=>{S.$$('[data-tab]').forEach(x=>x.classList.toggle('primary',x===b));S.$('rolesPanel').style.display=b.dataset.tab==='roles'?'':'none';S.$('usersPanel').style.display=b.dataset.tab==='users'?'':'none'});S.$('addRole').onclick=()=>roleModal();S.$('addUser').onclick=()=>userModal();(async()=>{catalog=(await S.api('/permission-catalog')).catalog||{};await loadRoles();await loadUsers()})().catch(e=>S.toast(e.message,'err'));
+</script>{% endblock %}
