@@ -5,6 +5,7 @@
 - 前端可查看分析进度/负面预警/回复推荐
 """
 import csv
+import hashlib
 import io
 import json
 import logging
@@ -239,6 +240,12 @@ def ensure_auto_task_table():
                 'next_attempt_ts': "BIGINT NULL COMMENT '下次可调度时间'",
                 'verify_after_ts': "BIGINT NULL COMMENT '待确认任务下次核验时间'",
                 'verify_attempts': "INT NOT NULL DEFAULT 0 COMMENT '核验次数'",
+                'reply_snapshot': "TEXT NULL COMMENT '任务创建时冻结的回复正文'",
+                'reply_hash': "CHAR(64) NULL COMMENT '冻结回复摘要'",
+                'idempotency_key': "VARCHAR(255) NULL COMMENT '操作幂等键'",
+                'sent_evidence': "TEXT NULL COMMENT '平台回执或核验依据'",
+                'failure_class': "VARCHAR(64) NULL COMMENT '失败分类'",
+                'last_event': "VARCHAR(64) NULL COMMENT '最近审计事件'",
             }
             for name, definition in additions.items():
                 if name not in existing:
@@ -248,7 +255,42 @@ def ensure_auto_task_table():
                              AND INDEX_NAME='idx_dispatch'""")
             if not cur.fetchone()['n']:
                 cur.execute("CREATE INDEX idx_dispatch ON comment_auto_task(status, next_attempt_ts, created_ts)")
+            cur.execute("""CREATE TABLE IF NOT EXISTS comment_auto_task_audit (
+                           id BIGINT NOT NULL AUTO_INCREMENT,
+                           task_id BIGINT NOT NULL,
+                           event_type VARCHAR(64) NOT NULL,
+                           actor VARCHAR(128) NOT NULL DEFAULT 'system',
+                           detail TEXT NULL,
+                           created_ts BIGINT NOT NULL,
+                           PRIMARY KEY (id), KEY idx_task_created (task_id, created_ts)
+                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评论自动任务审计事件'""")
+            cur.execute("""CREATE TABLE IF NOT EXISTS reply_send_ledger (
+                           id BIGINT NOT NULL AUTO_INCREMENT, task_id BIGINT NOT NULL,
+                           platform VARCHAR(32) NOT NULL, account_nickname VARCHAR(255) NOT NULL,
+                           sent_ts BIGINT NOT NULL, evidence TEXT NULL,
+                           PRIMARY KEY (id), UNIQUE KEY uk_task (task_id),
+                           KEY idx_account_time (platform, account_nickname, sent_ts)
+                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='回复发送额度账本'""")
+            cur.execute("""CREATE TABLE IF NOT EXISTS reply_account_risk (
+                           platform VARCHAR(32) NOT NULL, account_nickname VARCHAR(255) NOT NULL,
+                           cooldown_until BIGINT NULL, reason VARCHAR(64) NULL, updated_ts BIGINT NOT NULL,
+                           PRIMARY KEY (platform, account_nickname)
+                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='回复账号风控状态'""")
         conn.commit()
+
+
+def _snapshot_auto_task(cur, src_table, src_pk, action, reply):
+    """Freeze approved content so later draft edits cannot change an in-flight write."""
+    text = str(reply or '').strip()
+    fingerprint = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    idempotency_key = f"{src_table}:{src_pk}:{action}:{fingerprint}"
+    cur.execute("""UPDATE comment_auto_task
+                   SET reply_snapshot=COALESCE(reply_snapshot, %s),
+                       reply_hash=COALESCE(reply_hash, %s),
+                       idempotency_key=COALESCE(idempotency_key, %s),
+                       last_event=COALESCE(last_event, 'created')
+                   WHERE src_table=%s AND src_pk=%s AND action_type=%s""",
+                (text, fingerprint, idempotency_key, src_table, src_pk, action))
 
 def ensure_zhihu_comment_url_column():
     """为知乎评论补齐来源帖子链接，并从知乎内容表回填。"""
@@ -347,11 +389,12 @@ def _create_bilibili_auto_task(cur, rid):
           error_message=IF(status IN ('success','running'), error_message, VALUES(error_message))
     """, (row["id"], row["comment_id"], row["video_id"], account_name,
           action, status, error, int(time.time())))
+    _snapshot_auto_task(cur, 'bilibili_video_comment', row['id'], action, reply)
     return "created", action
 
 def _create_douyin_auto_task(cur, rid):
     cur.execute("""
-        SELECT c.id, c.comment_id, c.aweme_id, c.reviewed, c.handled, c.no_action,
+        SELECT c.id, c.comment_id, c.aweme_id, c.reviewed, c.reply_manual_override, c.handled, c.no_action,
                c.delete_requested, CAST(c.reply_suggestion AS CHAR) reply,
                a.nickname AS account_nickname, p.`Bit窗口` AS bit_window
         FROM douyin_aweme_comment c
@@ -369,7 +412,7 @@ def _create_douyin_auto_task(cur, rid):
     reply = str(row.get("reply") or "")
     if row.get("delete_requested"):
         action = "delete"
-    elif row.get("reviewed") and reply and not reply.startswith("⚠ 分析失败"):
+    elif (row.get("reviewed") or row.get("reply_manual_override")) and reply and not reply.startswith("⚠ 分析失败"):
         action = "reply"
     else:
         return "skipped", "未达到自动操作条件"
@@ -388,6 +431,7 @@ def _create_douyin_auto_task(cur, rid):
           error_message=IF(status IN ('success','running'), error_message, VALUES(error_message))
     """, (row["id"], row["comment_id"], row["aweme_id"], row.get("account_nickname"),
           bit_window, action, status, error, int(time.time())))
+    _snapshot_auto_task(cur, 'douyin_aweme_comment', row['id'], action, reply)
     return "created", action
 
 def _create_xhs_auto_task(cur, rid):
@@ -407,6 +451,7 @@ def _create_xhs_auto_task(cur, rid):
       VALUES ('小红书','xhs_note_comment',%s,%s,%s,%s,%s,%s,%s,%s,%s)
       ON DUPLICATE KEY UPDATE bit_window=VALUES(bit_window),status=IF(status IN ('success','running'),status,VALUES(status)),error_message=IF(status IN ('success','running'),error_message,VALUES(error_message))""",
       (row['id'],row.get('comment_id'),row.get('note_id'),row.get('account_name') or row.get('creator_hash'),bit,action,'queued' if bit else 'failed',None if bit else '缺少Bit窗口',int(time.time())))
+    _snapshot_auto_task(cur, 'xhs_note_comment', row['id'], action, reply)
     return "created", action
 
 def _create_zhihu_auto_task(cur, rid):
@@ -426,6 +471,7 @@ def _create_zhihu_auto_task(cur, rid):
       VALUES ('知乎','zhihu_comment',%s,%s,%s,%s,%s,%s,%s,%s,%s)
       ON DUPLICATE KEY UPDATE bit_window=VALUES(bit_window),status=IF(status IN ('success','running'),status,VALUES(status)),error_message=IF(status IN ('success','running'),error_message,VALUES(error_message))""",
       (row['id'],row.get('comment_id'),row.get('content_id'),row.get('user_nickname'),bit,action,'queued' if bit else 'failed',None if bit else '缺少Bit窗口',int(time.time())))
+    _snapshot_auto_task(cur, 'zhihu_comment', row['id'], action, reply)
     return "created", action
 
 

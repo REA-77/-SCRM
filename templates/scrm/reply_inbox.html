@@ -1,0 +1,8 @@
+{% extends "scrm/base.html" %}
+{% block title %}回复收件箱{% endblock %}
+{% block content %}
+<div class="page-head"><div><h2>📥 统一回复收件箱</h2><div class="sub">集中查看已审核回复任务；发送仍由风控与调度器决定。</div></div><button class="btn" id="refresh">刷新</button></div>
+<div class="filter-bar"><select id="platform"><option value="">全部平台</option><option>抖音</option><option>小红书</option><option>B站</option><option>知乎</option></select><select id="status"><option value="">全部状态</option><option value="queued">待调度</option><option value="blocked">已拦截</option><option value="uncertain">待核验</option><option value="success">成功</option><option value="failed">失败</option></select><span id="total"></span></div>
+<div class="card" style="padding:0;overflow:auto"><table class="data"><thead><tr><th>任务</th><th>平台/账号</th><th>回复快照</th><th>状态</th><th>最近事件</th><th>说明</th></tr></thead><tbody id="rows"></tbody></table></div>
+{% endblock %}{% block scripts %}<script>
+const $=id=>document.getElementById(id); async function load(){const q=new URLSearchParams({platform:$('platform').value,status:$('status').value});const r=await fetch('/scrm/api/reply-inbox?'+q);const d=await r.json();$('total').textContent='共 '+d.total+' 条';$('rows').innerHTML=d.rows.map(x=>`<tr><td>${x.id}</td><td>${x.platform} / ${x.account_nickname||'—'}</td><td>${S.esc(x.reply_snapshot||'—')}</td><td>${x.status}</td><td>${x.last_event||'—'}</td><td>${S.esc(x.error_message||x.failure_class||'—')}</td></tr>`).join('')||'<tr><td colspan="6">暂无任务</td></tr>'};$('refresh').onclick=load;['platform','status'].forEach(x=>$(x).onchange=load);load();</script>{% endblock %}

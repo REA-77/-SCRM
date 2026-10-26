@@ -38,19 +38,27 @@ def recover_expired_claims(now=None):
                                error_message='执行进程中断，已重新排队'
                            WHERE status='claimed' AND claimed_ts < %s""", (now - 300,))
             count = cur.rowcount
+            cur.execute("""UPDATE comment_auto_task SET status='queued', error_message=NULL
+                           WHERE status='blocked' AND next_attempt_ts IS NOT NULL
+                             AND next_attempt_ts <= %s""", (now,))
+            count += cur.rowcount
         conn.commit()
     return count
 
 
 def claim_queued(limit=20, now=None):
-    """Atomically claim a small batch.  A claim is not a send and is safe to recover."""
+    """Atomically claim a small batch.  Legacy ``pending`` rows stay untouched.
+
+    This avoids turning a deployment/restart into permission to send old work;
+    an operator must explicitly requeue any historical task first.
+    """
     now = int(now or time.time())
     claimed = []
     with get_conn() as conn:
         with conn.cursor() as cur:
             # ``FOR UPDATE`` makes this work on MySQL versions without SKIP LOCKED.
             cur.execute("""SELECT id FROM comment_auto_task
-                           WHERE status IN ('queued', 'pending')
+                           WHERE status='queued'
                              AND (next_attempt_ts IS NULL OR next_attempt_ts <= %s)
                            ORDER BY created_ts, id LIMIT %s FOR UPDATE""", (now, limit))
             for row in cur.fetchall():
@@ -58,7 +66,7 @@ def claim_queued(limit=20, now=None):
                 cur.execute("""UPDATE comment_auto_task
                                SET status='claimed', claim_owner=%s, claimed_ts=%s,
                                    attempt_count=attempt_count+1, error_message=NULL
-                               WHERE id=%s AND status IN ('queued', 'pending')""",
+                               WHERE id=%s AND status='queued'""",
                             (WORKER_ID, now, task_id))
                 if cur.rowcount:
                     claimed.append(task_id)

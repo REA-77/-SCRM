@@ -7,9 +7,12 @@ bindings remain available for login and Cookie synchronisation.
 import argparse
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
+import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -19,15 +22,46 @@ from db import get_conn
 
 BASE_DIR = Path(__file__).resolve().parent
 BIT_API = os.getenv("BITBROWSER_API", "http://127.0.0.1:54345")
+_BIT_WINDOW_LOCKS = {}
+_BIT_WINDOW_LOCKS_GUARD = threading.Lock()
+
+
+def _bit_window_lock(window_id):
+    key = str(window_id or "").strip() or "__default__"
+    with _BIT_WINDOW_LOCKS_GUARD:
+        return _BIT_WINDOW_LOCKS.setdefault(key, threading.Lock())
+
+
+def _reset_cdp_page_targets(cdp_http):
+    """Close stale page targets without PowerShell, preserving the profile."""
+    address = str(cdp_http or '').strip().rstrip('/')
+    if not address:
+        return 0
+    if not address.startswith(('http://', 'https://')):
+        address = 'http://' + address
+    try:
+        listing = requests.get(f'{address}/json/list', timeout=10).json()
+    except Exception:
+        return 0
+    closed = 0
+    for target in listing if isinstance(listing, list) else []:
+        target_id = str(target.get('id') or '').strip()
+        if target.get('type') != 'page' or not target_id:
+            continue
+        try:
+            requests.get(f'{address}/json/close/{target_id}', timeout=5)
+            closed += 1
+        except Exception:
+            continue
+    return closed
 
 # The supplied ``douyin_commenter`` bundle is kept next to this application.
-# It signs and sends the Web comment API directly, so a reply does not need a
-# BitBrowser clone (or any additional BitBrowser window).
+# It signs and sends the Web comment API directly.  Its identity must however
+# be read from the account's BitBrowser profile: a Cookie captured in one
+# browser fingerprint cannot safely be replayed with a global fake fingerprint.
 DOUYIN_COMMENTER_ROOT = BASE_DIR / "douyin_commenter_reference" / "douyin_commenter"
-DEFAULT_DOUYIN_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
+DOUYIN_BROWSER_TOOL_ROOT = BASE_DIR / "douyin-creator-tools"
+_DOUYIN_BROWSER_IDENTITY_CACHE = {}
 
 
 def _explicitly_missing(task):
@@ -186,6 +220,7 @@ def process_web(platform, table, limit, dry_run=False):
     tasks = fetch_web_tasks(limit, platform, table)
     for task in tasks:
         set_task_status(task['task_id'], 'running')
+        health_check_ok = False
         try:
             call_web_reply(task, dry_run)
             if not dry_run: mark_comment_handled(task['comment_id'], table)
@@ -262,6 +297,115 @@ def get_douyin_cookie(account_name="", bit_window=""):
     return cookie_rows[0]
 
 
+def _find_bitbrowser_window(bit_window):
+    """Resolve the stored BitBrowser sequence number to its stable window ID."""
+    seq = str(bit_window or "").strip()
+    if not seq:
+        raise RuntimeError("抖音任务缺少Bit窗口，无法读取浏览器身份")
+    page = 0
+    while True:
+        response = requests.post(
+            f"{BIT_API}/browser/list", json={"page": page, "pageSize": 100}, timeout=20
+        )
+        response.raise_for_status()
+        data = response.json().get("data") or {}
+        rows = data.get("list") or []
+        match = next((row for row in rows if str(row.get("seq")) == seq), None)
+        if match:
+            return match
+        total = int(data.get("totalNum") or 0)
+        if not rows or (page + 1) * 100 >= total:
+            break
+        page += 1
+    raise RuntimeError(f"未找到Bit窗口 {seq}")
+
+
+def _read_bitbrowser_identity(debug_address):
+    """Read the active profile's JS-visible browser identity over local CDP."""
+    try:
+        import websockets
+    except ImportError as exc:
+        raise RuntimeError("缺少 websockets，无法读取Bit窗口浏览器身份") from exc
+
+    address = str(debug_address or "").strip().removeprefix("http://").removeprefix("https://")
+    if not address:
+        raise RuntimeError("Bit窗口未提供调试地址")
+    listing = requests.get(f"http://{address}/json/list", timeout=15).json()
+    pages = [item for item in listing if item.get("type") == "page" and item.get("webSocketDebuggerUrl")]
+    if not pages:
+        raise RuntimeError("Bit窗口没有可读取的页面")
+    # The profile settings are shared by pages.  Prefer an ordinary page over
+    # BitBrowser's own workbench tab, which can have a different document host.
+    page = next((item for item in pages if "bitbrowser" not in str(item.get("url") or "")), pages[0])
+
+    async def read():
+        expression = (
+            "JSON.stringify({ua:navigator.userAgent,locale:navigator.language,"
+            "width:screen.width,height:screen.height})"
+        )
+        async with websockets.connect(page["webSocketDebuggerUrl"], max_size=1024 * 1024) as socket:
+            await socket.send(json.dumps({
+                "id": 1, "method": "Runtime.evaluate",
+                "params": {"expression": expression, "returnByValue": True},
+            }))
+            while True:
+                message = json.loads(await asyncio.wait_for(socket.recv(), timeout=15))
+                if message.get("id") == 1:
+                    value = ((message.get("result") or {}).get("result") or {}).get("value")
+                    if not value:
+                        raise RuntimeError("Bit窗口未返回浏览器身份")
+                    return json.loads(value)
+
+    try:
+        result = asyncio.run(read())
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"读取Bit窗口浏览器身份失败: {type(exc).__name__}") from exc
+    ua = str(result.get("ua") or "").strip()
+    locale = str(result.get("locale") or "").strip()
+    try:
+        width, height = int(result.get("width")), int(result.get("height"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Bit窗口返回的屏幕尺寸无效") from exc
+    if "Chrome/" not in ua or not locale or width < 320 or height < 240:
+        raise RuntimeError("Bit窗口返回的浏览器身份不完整")
+    return {"ua": ua, "locale": locale, "width": width, "height": height}
+
+
+def get_douyin_browser_identity(bit_window):
+    """Open the account profile if needed and return its actual request identity."""
+    seq = str(bit_window or "").strip()
+    if seq in _DOUYIN_BROWSER_IDENTITY_CACHE:
+        return _DOUYIN_BROWSER_IDENTITY_CACHE[seq]
+    window_id = None
+    try:
+        window = _find_bitbrowser_window(seq)
+        window_id = window.get("id")
+        opened = requests.post(
+            f"{BIT_API}/browser/open", json={"id": window_id}, timeout=60
+        )
+        opened.raise_for_status()
+        payload = opened.json()
+        if not payload.get("success") or not (payload.get("data") or {}).get("http"):
+            raise RuntimeError(str(payload.get("msg") or "打开Bit窗口失败"))
+        identity = _read_bitbrowser_identity(payload["data"]["http"])
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"读取Bit窗口 {seq} 身份失败: {type(exc).__name__}") from exc
+    finally:
+        # 环境指纹已从真实窗口读取完毕，直连模式不应把 BitBrowser 窗口
+        # 长时间留在打开状态。网页回复模式由 Node 脚本在任务结束时关闭。
+        if window_id:
+            try:
+                requests.post(f"{BIT_API}/browser/close", json={"id": window_id}, timeout=30)
+            except Exception as exc:
+                logging.getLogger(__name__).warning("关闭Bit窗口 %s 失败: %s", seq, type(exc).__name__)
+    _DOUYIN_BROWSER_IDENTITY_CACHE[seq] = identity
+    return identity
+
+
 def _load_douyin_commenter():
     """Load the supplied direct-comment client without requiring BitBrowser.
 
@@ -281,7 +425,7 @@ def _load_douyin_commenter():
         ) from exc
 
 
-async def _post_douyin_reply_direct(task, cookie_header):
+async def _post_douyin_reply_direct(task, cookie_header, browser_identity):
     """Send exactly one reply through the supplied signed Web API client.
 
     A write result that cannot be confirmed is intentionally *not* retried.
@@ -296,7 +440,12 @@ async def _post_douyin_reply_direct(task, cookie_header):
     if not aweme_id or not comment_id:
         return {"replyPlanId": comment_id, "status": "failed", "error": "缺少作品 ID 或目标评论 ID"}
     client_type = _load_douyin_commenter()
-    client = client_type(cookie_header, DEFAULT_DOUYIN_UA, timeout=25)
+    client = client_type(
+        cookie_header, browser_identity["ua"], timeout=25,
+        locale=browser_identity["locale"],
+        screen_width=browser_identity["width"],
+        screen_height=browser_identity["height"],
+    )
     async with client.session_scope():
         ok, sent_comment_id, error = await client.post_comment(
             aweme_id, message, reply_comment_id=comment_id
@@ -314,16 +463,149 @@ async def _post_douyin_reply_direct(task, cookie_header):
     }
 
 
-def run_douyin_reply(tasks, dry_run=False):
-    """Reply through the signed API; never create or open a BitBrowser window.
+def _run_douyin_browser_plans_unlocked(tasks, cookie_header, account_name):
+    """Run reply/delete plans through the existing headless creator-center flow.
 
-    Account-to-BitBrowser mapping remains the source of the stored Cookie, so
-    existing accounts continue to work.  BitBrowser is not contacted during a
-    send; it is only still used separately for login/Cookie synchronisation.
+    Deletion is deliberately not sent through the signed comment API: the
+    browser implementation verifies the target comment, clicks the native
+    delete menu/confirmation, and confirms that the row disappeared.
     """
+    plans = []
+    for task in tasks:
+        action = "delete" if task.get("action_type") == "delete" else "reply"
+        plans.append({
+            "id": str(task.get("comment_id") or ""),
+            "awemeId": str(task.get("aweme_id") or task.get("content_id") or ""),
+            "workTitle": task.get("title") or "",
+            "commentText": task.get("content") or "",
+            "action": action,
+            "replyMessage": task.get("reply_suggestion") or "",
+        })
+    if any(not p["id"] or not p["awemeId"] or not p["workTitle"] for p in plans):
+        raise RuntimeError("抖音网页任务缺少评论ID、作品ID或作品标题")
+    bit_window = str(tasks[0].get("bit_window") or "").strip()
+    window_id = None
+    opened_window = False
+    cdp = None
+    if bit_window:
+        window = _find_bitbrowser_window(bit_window)
+        window_id = window.get("id")
+        opened = requests.post(f"{BIT_API}/browser/open", json={"id": window_id}, timeout=60)
+        opened.raise_for_status()
+        payload = opened.json()
+        cdp = payload.get("data") or {}
+        if not cdp.get("ws"):
+            raise RuntimeError("Bit窗口未返回CDP地址，无法执行网页回退")
+        if cdp.get("http") and "://" not in str(cdp["http"]):
+            cdp["http"] = "http://" + str(cdp["http"])
+        if cdp.get("ws") and "://" not in str(cdp["ws"]):
+            cdp["ws"] = "ws://" + str(cdp["ws"])
+        # Playwright 初始化 CDP 时会枚举窗口内所有 page target；任一死渲染器
+        # 都会让连接长期等待。先用现有健康检查关闭死 target，失败也不阻断
+        # 后续连接（健康检查本身是保护性步骤）。
+        try:
+            port = str(cdp["http"]).rsplit(":", 1)[-1]
+            check_script = BASE_DIR / "bitbrowser-cdp-check.ps1"
+            subprocess.run(
+                ["pwsh", "-NoProfile", "-File", str(check_script), "-Port", port, "-CloseDead"],
+                cwd=str(BASE_DIR), capture_output=True, text=True, timeout=30,
+                check=True,
+            )
+            health_check_ok = True
+        except Exception:
+            pass
+        if not health_check_ok:
+            _reset_cdp_page_targets(cdp.get("http"))
+        opened_window = True
+    work_dir = DOUYIN_BROWSER_TOOL_ROOT / "comments-output"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"auto-task-{os.getpid()}-{time.time_ns()}"
+    input_path = work_dir / f"{stem}-input.json"
+    output_path = work_dir / f"{stem}-output.json"
+    try:
+        input_path.write_text(json.dumps({
+            "account": {"account_name": account_name or ""},
+            "cookieHeader": cookie_header,
+            "plans": plans,
+            "bitWindow": bit_window,
+            "bitBrowserId": window_id,
+            "cdpWebSocket": cdp.get("ws") if cdp else None,
+            "cdpHttp": cdp.get("http") if cdp else None,
+        }, ensure_ascii=False), encoding="utf-8")
+        command = ["node", "db-auto-reply.mjs", str(input_path)]
+        if cdp:
+            # 受限 Windows 环境不能创建新的 Chromium 进程；复用原 BitBrowser
+            # CDP 环境既避免 spawn EPERM，也保持账号原有 Cookie/指纹。
+            command.append("--use-cdp")
+        command.extend(["--headless", "--out", str(output_path)])
+        browser_env = os.environ.copy()
+        browser_env["SKIP_CDP_PREFLIGHT"] = "1"
+        # db-auto-reply 的评论采集本身允许 120 秒；原来的 90 秒外层
+        # 超时会在采集尚未结束时强行杀掉 Node，表现为“无匹配”或空结果。
+        # 外层只负责兜底，给导航、作品切换和评论滚动留出缓冲。
+        browser_timeout = max(
+            int(os.getenv("DB_REPLY_TIMEOUT_SECONDS", "210")),
+            180,
+        )
+        try:
+            result = subprocess.run(
+                command,
+                cwd=str(DOUYIN_BROWSER_TOOL_ROOT), env=browser_env,
+                capture_output=True, text=True, timeout=browser_timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout_tail = str(exc.stdout or "")[-1200:]
+            stderr_tail = str(exc.stderr or "")[-1200:]
+            detail = "网页回复脚本超时（{}秒）".format(browser_timeout)
+            if stdout_tail or stderr_tail:
+                detail += "\n" + (stdout_tail or stderr_tail)
+            raise RuntimeError(detail) from exc
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "网页删除脚本失败").strip()[-500:]
+            raise RuntimeError(detail)
+        try:
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RuntimeError("网页删除脚本未返回结果") from exc
+    finally:
+        # Cleanup is best-effort; it must not turn a confirmed browser result
+        # into a task failure on Windows.
+        for path in (input_path, output_path):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if opened_window and window_id:
+            try:
+                requests.post(f"{BIT_API}/browser/close", json={"id": window_id}, timeout=30)
+            except Exception:
+                pass
+    return payload.get("results") or []
+
+
+def _run_douyin_browser_plans(tasks, cookie_header, account_name):
+    """Serialize CDP use per BitBrowser profile.
+
+    A second task for the same profile used to close the window while the
+    first Playwright process was navigating, producing the misleading
+    ``Target page, context or browser has been closed`` error.
+    """
+    window_id = str(tasks[0].get("bit_window") or "") if tasks else ""
+    with _bit_window_lock(window_id):
+        return _run_douyin_browser_plans_unlocked(tasks, cookie_header, account_name)
+
+
+def _run_douyin_browser_delete(tasks, cookie_header, account_name):
+    """Compatibility wrapper for the browser delete path."""
+    return _run_douyin_browser_plans(tasks, cookie_header, account_name)
+
+
+def run_douyin_reply(tasks, dry_run=False):
+    """Reply through the signed API using the Cookie profile's real identity."""
     if not tasks:
         return []
-    cookie_row = get_douyin_cookie(tasks[0].get("account_nickname"), tasks[0].get("bit_window"))
+    first = tasks[0]
+    cookie_row = get_douyin_cookie(first.get("account_nickname"), first.get("bit_window"))
     cookie_header = cookie_row.get("cookies") or ""
     if "sessionid" not in cookie_header:
         raise RuntimeError("抖音cookie缺少sessionid，请重新同步cookie")
@@ -332,7 +614,32 @@ def run_douyin_reply(tasks, dry_run=False):
             {"replyPlanId": str(task.get("comment_id") or ""), "status": "dry_run"}
             for task in tasks
         ]
-    return [asyncio.run(_post_douyin_reply_direct(task, cookie_header)) for task in tasks]
+    delete_tasks = [task for task in tasks if task.get("action_type") == "delete"]
+    reply_tasks = [task for task in tasks if task.get("action_type") != "delete"]
+    results = []
+    if delete_tasks:
+        results.extend(_run_douyin_browser_delete(
+            delete_tasks, cookie_header, first.get("account_nickname")
+        ))
+    if not reply_tasks:
+        return results
+    # 同一账号/Bit窗口的任务共享一次真实环境读取；发送仍保持串行，
+    # 避免同一 profile 并发造成请求节奏异常或重复提交。
+    identity = get_douyin_browser_identity(first.get("bit_window"))
+    fallback_tasks = []
+    for task in reply_tasks:
+        result = asyncio.run(_post_douyin_reply_direct(task, cookie_header, identity))
+        # A definite HTTP 403 is a rejected direct write, not an uncertain
+        # write.  Fall back to the headless creator-center flow automatically.
+        if str(result.get("error") or "").startswith(("http_403", "api_rejected:")):
+            fallback_tasks.append(task)
+        else:
+            results.append(result)
+    if fallback_tasks:
+        results.extend(_run_douyin_browser_plans(
+            fallback_tasks, cookie_header, first.get("account_nickname")
+        ))
+    return results
 
 
 
@@ -449,9 +756,12 @@ def process(limit, dry_run=False):
     # 第一版按 Bit 窗口串行分组，避免同一浏览器窗口并发操作。
     groups = {}
     for task in tasks:
-        groups.setdefault(task["bit_window"], []).append(task)
-    for bit_window, group in groups.items():
-        print(f"处理 Bit窗口 {bit_window}: {len(group)} 个回复任务")
+        # 不能只按窗口序号分组：账号配置被替换或历史数据异常时，
+        # 同一个序号可能对应不同账号；按账号+窗口可避免串用 cookie。
+        key = (normalize_account_name(task.get("account_nickname")), str(task.get("bit_window") or ""))
+        groups.setdefault(key, []).append(task)
+    for (account_key, bit_window), group in groups.items():
+        print(f"处理账号 {account_key or '?'} / Bit窗口 {bit_window}: {len(group)} 个回复任务")
         for task in group:
             set_task_status(task["id"], "running")
         try:
@@ -459,7 +769,7 @@ def process(limit, dry_run=False):
             success_ids = {
                 str(r.get("replyPlanId")) for r in results
                 if r.get("status") in (
-                    "replied", "dry_run"
+                    "replied", "deleted", "dry_run", "dry_run_delete"
                 )
             }
             for task in group:

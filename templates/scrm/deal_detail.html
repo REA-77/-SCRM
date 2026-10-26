@@ -32,7 +32,7 @@ function dateInputValue(ts) { if (!ts) return ""; const d = new Date(Number(ts) 
 function dateOnly(ts) { if (!ts) return ""; const d = new Date(Number(ts) * 1000); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
 
 function sellingPointTemplateModal() {
-  const modal = S.modal({ title: "卖点模板", wide: true, body: `<div class="loading"><span class="spin"></span> 正在加载品类痛点…</div>`, okText: "保存并同步商品匹配", onOk: async body => {
+  const modal = S.modal({ title: "产品卖点", wide: true, body: `<div class="loading"><span class="spin"></span> 正在加载品类痛点…</div>`, okText: "保存并同步商品匹配", onOk: async body => {
     const rows = [...body.querySelectorAll("[data-pain-id]")].map(el => ({
       pain_point_id: el.dataset.painId,
       star_rating: Number(el.querySelector("[data-stars]").value),
@@ -43,7 +43,7 @@ function sellingPointTemplateModal() {
   }});
   S.api(`/deals/${DID}/selling-point-templates`).then(t => {
     if (!t.category) {
-      modal.bodyEl.innerHTML = `<div class="empty"><div class="big">🏷️</div>请先编辑商单并填写品类，再配置卖点模板</div>`;
+      modal.bodyEl.innerHTML = `<div class="empty"><div class="big">🏷️</div>请先编辑商单并填写品类，再配置产品卖点</div>`;
       return;
     }
     if (!t.rows.length) {
@@ -177,6 +177,7 @@ function render() {
     </section>
     <div class="grid cards-2 deal-detail-grid">
       <div>
+        ${renderOriginalVideos()}
         <div class="card">
           <div class="card-title">商单信息
             <span class="more">${S.badge(d.display_status || STATUS_TEXT[d.status] || d.status, d.data_completed ? "green" : (STATUS_COLOR[d.status] || "gray"), true)} <button class="btn sm" id="editDealBtn">编辑</button></span>
@@ -217,8 +218,16 @@ function render() {
 
       <div>
         <div class="card">
+          <div class="card-title">💡 产品卖点
+            <span class="more"><button class="btn sm" id="sellingPointToggle">展开</button> <button class="btn sm" id="sellingPointBtn">编辑并同步商品匹配</button></span>
+          </div>
+          <div id="sellingPointBody" style="display:none;">
+            ${data.deal.category ? (data.selling_point_templates || []).length ? `<div class="table-wrap"><table class="data"><thead><tr><th style="min-width:150px">痛点</th><th style="width:95px">品类</th><th style="width:80px">星级</th><th style="min-width:260px">标准回复</th></tr></thead><tbody>${data.selling_point_templates.map(p => `<tr><td>${S.esc(p.pain_point)}</td><td>${S.esc(p.category)}</td><td title="${S.esc(p.star_rating || 3)} 星" style="color:#f59e0b;white-space:nowrap">${"★".repeat(Number(p.star_rating || 3))}${"☆".repeat(5-Number(p.star_rating || 3))}</td><td style="white-space:pre-wrap">${S.esc(p.reply_guidance || "—")}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><div class="big">💡</div>「${S.esc(data.deal.category)}」暂无痛点，请先在知识库中维护</div>` : `<div class="empty"><div class="big">🏷️</div>请先编辑商单并填写品类</div>`}
+          </div>
+        </div>
+        <div class="card">
           <div class="card-title">📺 展示视频(${data.videos.length})
-            <span class="more"><button class="btn sm" id="sellingPointBtn">💡 卖点模板</button> <button class="btn sm" id="addVideoBtn2">➕ 添加</button></span>
+            <span class="more"><button class="btn sm" id="addVideoBtn2">➕ 添加</button></span>
           </div>
           ${data.videos.length ? `<div class="table-wrap">
             <table class="data">
@@ -242,18 +251,7 @@ function render() {
             </table>
           </div>` : `<div class="empty deal-empty"><div class="big">📺</div>暂无展示视频，点击「添加展示视频」补充平台账户对应的视频链接</div>`}
         </div>
-        <div class="card">
-          <div class="card-title">💡 卖点模板
-            <span class="more"><button class="btn sm" id="sellingPointBtn2">编辑并同步商品匹配</button></span>
-          </div>
-          ${data.deal.category ? (data.selling_point_templates || []).length ? `<div class="table-wrap"><table class="data"><thead><tr><th style="min-width:150px">痛点</th><th style="width:95px">品类</th><th style="width:80px">星级</th><th style="min-width:260px">标准回复</th></tr></thead><tbody>${data.selling_point_templates.map(p => `<tr><td>${S.esc(p.pain_point)}</td><td>${S.esc(p.category)}</td><td title="${S.esc(p.star_rating || 3)} 星" style="color:#f59e0b;white-space:nowrap">${"★".repeat(Number(p.star_rating || 3))}${"☆".repeat(5-Number(p.star_rating || 3))}</td><td style="white-space:pre-wrap">${S.esc(p.reply_guidance || "—")}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><div class="big">💡</div>「${S.esc(data.deal.category)}」暂无痛点，请先在知识库中维护</div>` : `<div class="empty"><div class="big">🏷️</div>请先编辑商单并填写品类</div>`}
-        </div>
-        <div class="card">
-          <div class="card-title">🚀 品牌原创视频 (${(data.historical_original_videos || []).length})</div>
-          ${(data.historical_original_videos || []).length ? `<div class="table-wrap"><table class="data"><thead><tr><th style="width:70px">平台</th><th style="width:120px">作者</th><th style="width:130px">产品名称</th><th>视频标题</th><th style="width:100px">播放</th><th style="width:130px">发布时间</th></tr></thead><tbody>
-            ${data.historical_original_videos.map(v => `<tr><td>${S.platformTag(v.platform)}</td><td class="clamp">${S.esc(v.upname || "—")}</td><td class="clamp">${S.esc(v.product_name || "—")}</td><td>${v.url ? `<a href="${S.esc(v.url)}" target="_blank" class="clamp">${S.esc(v.title || "打开视频")}</a>` : `<span class="clamp">${S.esc(v.title || "—")}</span>`}</td><td class="mono">${S.esc(v.view_count || "—")}</td><td class="nowrap muted">${S.fmtTs(v.publish_time)}</td></tr>`).join("")}
-          </tbody></table></div>` : `<div class="empty"><div class="big">🚀</div>${d.brand ? "暂无已审核通过的同品牌原创视频" : "请先在商单信息中填写品牌"}</div>`}
-        </div>
+        ${renderDealComments()}
       </div>
     </div>`;
   S.$("editDealBtn").onclick = statusModal;
@@ -264,7 +262,18 @@ function render() {
   });
   S.$("addVideoBtn2").onclick = videoModal;
   S.$("sellingPointBtn").onclick = sellingPointTemplateModal;
-  S.$("sellingPointBtn2").onclick = sellingPointTemplateModal;
+  const sellingPointToggle = S.$("sellingPointToggle");
+  const sellingPointBody = S.$("sellingPointBody");
+  sellingPointToggle.onclick = () => {
+    const expanded = sellingPointBody.style.display === "none";
+    sellingPointBody.style.display = expanded ? "" : "none";
+    sellingPointToggle.textContent = expanded ? "收起" : "展开";
+  };
+  renderDealCommentTable("intent");
+  S.$$('[data-deal-comment-tab]').forEach(btn => btn.onclick = () => {
+    S.$$('[data-deal-comment-tab]').forEach(item => item.classList.toggle("active", item === btn));
+    renderDealCommentTable(btn.dataset.dealCommentTab);
+  });
   S.$$('[data-edit-vid]').forEach(b => b.onclick = () => {
     const row = data.videos.find(v => Number(v.id) === Number(b.dataset.editVid));
     if (row) videoModal(row);
@@ -274,6 +283,23 @@ function render() {
       await S.api("/deals/video/delete", { method: "POST", body: { id: Number(b.dataset.vid) } });
       S.toast("已删除", "ok"); load();
     }));
+}
+
+function renderOriginalVideos() {
+  const rows = data.historical_original_videos || [];
+  return `<div class="card"><div class="card-title">🚀 博主原创 (${rows.length})</div>${rows.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>平台</th><th>作者</th><th>产品</th><th>视频标题</th><th>播放</th><th>发布时间</th></tr></thead><tbody>${rows.map(v => `<tr><td>${S.platformTag(v.platform || "—")}</td><td class="clamp">${S.esc(v.upname || "—")}</td><td class="clamp">${S.esc(v.product_name || "—")}</td><td>${v.url ? `<a href="${S.esc(v.url)}" target="_blank" class="clamp">${S.esc(v.title || "打开视频")}</a>` : S.esc(v.title || "—")}</td><td class="mono">${S.esc(v.view_count || "—")}</td><td class="nowrap muted">${S.fmtTs(v.publish_time)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><div class="big">🚀</div>请关注更多博主,期待与您的再次合作</div>`}</div>`;
+}
+
+function renderDealComments() {
+  const all = data.comment_samples || [];
+  return `<div class="card"><div class="card-title">💬 视频评论 <span class="sub2">${all.length} 条，支持 12 层回复关系</span></div><div class="tabs" style="padding:0 18px;margin-bottom:0"><button data-deal-comment-tab="intent" class="active">购买意向 <span class="n">${all.filter(c => c.intent).length}</span></button><button data-deal-comment-tab="negative">负面 <span class="n">${all.filter(c => c.neg).length}</span></button><button data-deal-comment-tab="other">其他 <span class="n">${all.filter(c => !c.intent && !c.neg).length}</span></button></div><div id="dealCommentTable"></div></div>`;
+}
+
+function renderDealCommentTable(tab = "intent") {
+  const all = data.comment_samples || [];
+  const rows = tab === "intent" ? all.filter(c => c.intent) : tab === "negative" ? all.filter(c => c.neg) : all.filter(c => !c.intent && !c.neg);
+  const label = {intent:"购买意向", negative:"负面", other:"其他"}[tab];
+  S.$("dealCommentTable").innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>平台</th><th>评论用户</th><th>评论内容</th><th>评论类型</th><th>购买意向</th><th>负面分类</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows.length ? rows.map(c => { const depth=Math.min(11,Math.max(0,Number(c.depth)||0)), indent=depth*20; return `<tr><td>${S.platformTag(c.platform || "—")}</td><td><div style="margin-left:${indent}px;padding-left:${depth?9:0}px;border-left:${depth?"2px solid var(--border)":"0"}">${depth?"↳ ":""}${S.esc(c.nickname || "匿名")}</div><div class="sub2" style="margin-left:${indent}px">${S.ago(c.ctime)}</div></td><td style="max-width:420px"><div class="clamp" style="margin-left:${indent}px;padding-left:${depth?9:0}px">${S.esc(c.content || "—")}</div></td><td>${c.comment_type ? S.badge(c.comment_type,c.neg?"red":"primary") : '<span class="muted">未分类</span>'}</td><td>${c.intent ? S.badge("有购买意向","amber",true) : S.badge("无明显意向","gray")}</td><td>${c.neg ? S.badge(c.comment_type ? `负面·${c.comment_type}` : "负面","red") : "—"}</td><td>${c.handled ? S.badge("已处理","green",true) : c.reviewed ? S.badge("已审核","primary",true) : c.analyzed ? S.badge("待处理","amber",true) : S.badge("待分析","gray",true)}</td><td><a class="btn sm ghost" href="/scrm/comments/${c.src_table}/${c.src_pk}">详情</a></td></tr>`; }).join("") : `<tr><td colspan="8"><div class="empty">暂无${label}评论</div></td></tr>`}</tbody></table></div>`;
 }
 
 S.$("addVideoBtn").onclick = videoModal;

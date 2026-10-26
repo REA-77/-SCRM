@@ -18,8 +18,12 @@ if (@($matches | Where-Object { $_.ExecutablePath -ne $pythonPath }).Count) {
 
 $state = Invoke-RestMethod 'http://127.0.0.1:5000/api/analyze/status' -TimeoutSec 10
 if ($state.processing) { throw 'Background analysis is active; restart postponed' }
-$tasks = Invoke-RestMethod 'http://127.0.0.1:5000/scrm/api/auto-tasks?status=running' -TimeoutSec 10
-if ($tasks.total -gt 0) { throw 'Platform writes are active; restart postponed' }
+$activeTasks = 0
+foreach ($taskStatus in @('claimed', 'sending', 'running')) {
+    $tasks = Invoke-RestMethod ("http://127.0.0.1:5000/scrm/api/auto-tasks?status=" + $taskStatus) -TimeoutSec 10
+    $activeTasks += [int]$tasks.total
+}
+if ($activeTasks -gt 0) { throw 'Platform writes are active; restart postponed' }
 
 $oldPids = @($matches | Select-Object -ExpandProperty ProcessId)
 Stop-Process -Id $oldPids

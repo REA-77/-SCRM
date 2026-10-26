@@ -75,11 +75,12 @@ def val(row, hmap, name):
 
 
 PLATFORM_COLUMNS = {
-    "B站": {"id": "B站ID", "fans": "B站粉丝量", "bit": "BIT窗口"},
-    "抖音": {"id": "抖音ID-IT用", "fans": "抖音粉丝量", "bit": "BIT窗口"},
-    "小红书": {"id": "小红书ID", "fans": "小红书粉丝量", "bit": "BIT窗口"},
-    "微博": {"id": "微博ID", "fans": "微博粉丝量", "bit": "BIT窗口"},
-    "知乎": {"id": "知乎ID", "fans": "知乎粉丝量", "bit": "BIT窗口"},
+    "B站": {"id": "B站ID", "fans": "B站粉丝量", "homepage": "B站主页链接", "bit": "BIT窗口"},
+    "抖音": {"id": "抖音ID-IT用", "fans": "抖音粉丝量", "homepage": "抖音主页", "bit": "BIT窗口"},
+    "小红书": {"id": "小红书ID", "fans": "小红书粉丝量", "homepage": "小红书主页链接", "bit": "BIT窗口"},
+    "微博": {"id": "微博ID", "fans": "微博粉丝量", "homepage": "微博主页链接", "bit": "BIT窗口"},
+    "知乎": {"id": "知乎ID", "fans": "知乎粉丝量", "homepage": "知乎主页", "bit": "BIT窗口"},
+    "视频号": {"homepage": "视频号主页链接", "bit": "BIT窗口"},
 }
 
 
@@ -121,6 +122,7 @@ def build_records(rows):
                 "nickname": nickname,
                 "account_id": val(row, hmap, cols.get("id", "")),
                 "fans": parse_fans(val(row, hmap, cols.get("fans", ""))),
+                "homepage_url": val(row, hmap, cols.get("homepage", "")),
                 "bit_window": val(row, hmap, cols.get("bit", "")),
             })
     return headers, up_records, account_records
@@ -186,6 +188,9 @@ def apply_updates(path):
                 if rec.get("fans") is not None:
                     fields.append("`粉丝`=%s")
                     params.append(rec["fans"])
+                if rec.get("homepage_url"):
+                    fields.append("`主页链接`=%s")
+                    params.append(rec["homepage_url"][:1000])
                 if rec.get("bit_window"):
                     fields.append("`Bit窗口`=%s")
                     params.append(rec["bit_window"][:255])

@@ -1,8 +1,8 @@
 {% extends "scrm/base.html" %}
 {% block title %}自动操作任务{% endblock %}
 {% block content %}
-<div class="page-head"><div><h2>自动操作任务</h2><div class="sub">查看执行进度和错误信息；执行或重试仅作用于所选任务。</div></div><button class="btn" id="refresh">刷新</button></div>
-<div class="filter-bar"><select id="platform"><option value="">全部平台</option><option>B站</option><option>抖音</option><option>小红书</option><option>知乎</option></select><select id="status"><option value="">全部状态</option><option value="pending">待执行</option><option value="running">执行中</option><option value="success">成功</option><option value="failed">失败</option><option value="uncertain">结果待核对</option></select><span id="total"></span></div>
+<div class="page-head"><div><h2>自动操作任务</h2><div class="sub">已审核任务由常驻调度器领取；结果待确认任务只核验，不会自动重发。</div></div><button class="btn" id="refresh">刷新</button></div>
+<div class="filter-bar"><select id="platform"><option value="">全部平台</option><option>B站</option><option>抖音</option><option>小红书</option><option>知乎</option></select><select id="status"><option value="">全部状态</option><option value="queued">待调度</option><option value="claimed">已领取</option><option value="sending">发送中</option><option value="success">成功</option><option value="failed">失败</option><option value="uncertain">结果待核对</option><option value="no_action">无需处理</option></select><span id="total"></span><span id="dispatcher"></span></div>
 <p id="notice" role="status"></p>
 <div style="overflow:auto"><table style="width:100%;white-space:nowrap"><thead><tr><th>任务</th><th>平台 / 账号</th><th>评论 ID</th><th>操作</th><th>状态</th><th>创建时间</th><th>开始时间</th><th>完成时间</th><th>执行耗时</th><th>错误日志</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table></div>
 <div class="actions" style="margin-top:16px"><button class="btn" id="prev">上一页</button><span id="page"></span><button class="btn" id="next">下一页</button></div>
@@ -10,20 +10,29 @@
 {% block scripts %}
 <script>
 let page=1,total=0,busy=false;
-const $=id=>document.getElementById(id), labels={pending:'待执行',running:'执行中',success:'成功',failed:'失败',uncertain:'结果待核对'};
+const $=id=>document.getElementById(id), labels={queued:'待调度',pending:'待调度',claimed:'已领取',sending:'发送中',running:'发送中',success:'成功',failed:'失败',uncertain:'结果待核对',no_action:'无需处理'};
 const date=t=>t?new Date(t*1000).toLocaleString('zh-CN',{hour12:false}):'—';
+async function resolveTask(id,outcome,message){
+ if(!confirm(message))return;
+ const res=await fetch('/scrm/api/auto-tasks/'+id+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({outcome})});
+ const d=await res.json();
+ if(!res.ok){$('notice').textContent=d.error||'核销失败';return;}
+ $('notice').textContent=outcome==='not_sent'?'已标记未发送成功，可重新排队':'任务已核销';
+ await load();
+}
 async function load(){
  if(busy)return;busy=true;
  try{
  const res=await fetch('/scrm/api/auto-tasks?'+new URLSearchParams({page,platform:$('platform').value,status:$('status').value}));
  const data=await res.json();if(!res.ok)throw Error(data.error||'加载失败');total=data.total;
+ const ds=await fetch('/scrm/api/auto-tasks/dispatcher').then(r=>r.json());$('dispatcher').textContent=ds.running?'调度器运行中':'调度器未运行';
  $('rows').replaceChildren();
  for(const r of data.rows){
   const tr=document.createElement('tr');
   const duration=r.started_ts?Math.max(0,(r.finished_ts||Math.floor(Date.now()/1000))-r.started_ts)+' 秒':'—';
   for(const v of [r.id,r.platform+' / '+(r.account_nickname||'—'),r.comment_id,r.action_type==='reply'?'回复':'删除',labels[r.status]||r.status,date(r.created_ts),date(r.started_ts),date(r.finished_ts),duration]){const td=document.createElement('td');td.textContent=v;tr.append(td);}
   const log=document.createElement('td');if(r.error_message){const d=document.createElement('details'),s=document.createElement('summary'),p=document.createElement('pre');s.textContent='查看错误';p.textContent=r.error_message;p.style.cssText='white-space:pre-wrap;min-width:240px;max-width:420px';d.append(s,p);log.append(d);}else log.textContent='—';tr.append(log);
-  const action=document.createElement('td');if(['pending','failed'].includes(r.status)){const b=document.createElement('button');b.className='btn';b.textContent=r.status==='pending'?'执行':'重试';b.onclick=async()=>{if(r.status==='failed'&&!confirm('重试会实际执行此操作。如果此前结果不明确，请先确认平台没有成功执行。继续？'))return;b.disabled=true;try{const res=await fetch('/scrm/api/auto-tasks/'+r.id+'/retry',{method:'POST'});const d=await res.json();if(!res.ok)throw Error(d.error);$('notice').textContent='任务 '+r.id+' 已加入队列，将依次执行';await load();}catch(e){$('notice').textContent=e.message;b.disabled=false;}};action.append(b);}else action.textContent='—';tr.append(action);$('rows').append(tr);
+  const action=document.createElement('td');if(['queued','pending','failed'].includes(r.status)){const b=document.createElement('button');b.className='btn';b.textContent='重新排队';b.onclick=async()=>{if(r.status==='failed'&&!confirm('重新排队会再次发送。请先确认平台未成功执行。继续？'))return;b.disabled=true;try{const res=await fetch('/scrm/api/auto-tasks/'+r.id+'/retry',{method:'POST'});const d=await res.json();if(!res.ok)throw Error(d.error);$('notice').textContent='任务 '+r.id+' 已进入待调度队列';await load();}catch(e){$('notice').textContent=e.message;b.disabled=false;}};action.append(b);if(r.status==='failed'){const b2=document.createElement('button');b2.className='btn';b2.textContent='标记未发送成功';b2.onclick=()=>resolveTask(r.id,'not_sent','确认平台未成功发送，并释放本地回复台账后允许重试？');action.append(b2);}}else if(r.status==='uncertain'){for(const [text,outcome] of [['确认已发','sent'],['未发送成功','not_sent'],['不再处理','no_action']]){const b=document.createElement('button');b.className='btn';b.textContent=text;b.onclick=()=>resolveTask(r.id,outcome,'此操作会人工核销任务，未发送成功会释放本地台账。继续？');action.append(b);}}else action.textContent='—';tr.append(action);$('rows').append(tr);
  }
  if(!data.rows.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=11;td.textContent='暂无任务';tr.append(td);$('rows').append(tr);}
  $('total').textContent='共 '+total+' 个任务';$('page').textContent='第 '+page+' 页';$('prev').disabled=page<=1;$('next').disabled=page*30>=total;

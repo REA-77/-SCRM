@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS `平台运营账号` (
     `cookie` LONGTEXT NULL,
     `粉丝` BIGINT UNSIGNED NULL,
     `ID` VARCHAR(255) NULL,
+    `主页链接` VARCHAR(1000) NULL,
     `Bit窗口` VARCHAR(255) NULL,
     INDEX `idx_platform_id` (`平台`, `ID`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='平台运营账号'
@@ -25,6 +26,15 @@ ID_FIELDS = {
     '知乎': ('知乎ID',),
     '小红书': ('小红书ID',),
     '微博': ('微博ID',),
+}
+
+HOMEPAGE_FIELDS = {
+    'B站': ('B站主页链接',),
+    '抖音': ('抖音主页',),
+    '知乎': ('知乎主页',),
+    '小红书': ('小红书主页链接',),
+    '微博': ('微博主页链接',),
+    '视频号': ('视频号主页链接',),
 }
 
 
@@ -71,7 +81,10 @@ def extract(source):
                     raise ValueError(f'第 {number} 行有空平台')
                 account_id = next((text(row.get(field)) for field in ID_FIELDS.get(platform, ())
                                    if text(row.get(field))), None)
-                result.append((platform, nickname, None, fans(row.get(platform + '粉丝量')), account_id, None))
+                homepage_url = next((text(row.get(field)) for field in HOMEPAGE_FIELDS.get(platform, ())
+                                     if text(row.get(field))), None)
+                result.append((platform, nickname, None, fans(row.get(platform + '粉丝量')), account_id,
+                               homepage_url, None))
     finally:
         workbook.close()
     return result
@@ -101,11 +114,12 @@ def main():
                 cur.execute('SELECT COUNT(*) AS n FROM `平台运营账号`')
                 if cur.fetchone()['n']:
                     raise ValueError('目标表已有数据，停止导入，避免重复或覆盖')
-                cur.executemany('INSERT INTO `平台运营账号` (`平台`,`昵称`,`cookie`,`粉丝`,`ID`,`Bit窗口`) '
-                                'VALUES (%s,%s,%s,%s,%s,%s)', rows)
+                cur.executemany('INSERT INTO `平台运营账号` (`平台`,`昵称`,`cookie`,`粉丝`,`ID`,`主页链接`,`Bit窗口`) '
+                                'VALUES (%s,%s,%s,%s,%s,%s,%s)', rows)
             conn.commit()
     print(json.dumps({'records': len(rows), 'platforms': dict(Counter(r[0] for r in rows)),
                       'missing_id': sum(r[4] is None for r in rows),
+                      'missing_homepage_url': sum(r[5] is None for r in rows),
                       'missing_fans': sum(r[3] is None for r in rows)}, ensure_ascii=False))
 
 

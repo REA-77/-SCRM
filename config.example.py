@@ -37,6 +37,19 @@ REPLY_SERVICE_URL = "http://127.0.0.1:5100"
 REPLY_SERVICE_API_KEY = ""
 REPLY_SERVICE_TIMEOUT_SECONDS = 70
 
+# ---------- 常驻回复调度与待确认核验 ----------
+# 审核通过的任务进入 queued，由 5000 服务内的常驻调度器领取；服务重启后自动恢复。
+REPLY_DISPATCH_INTERVAL_SECONDS = 10
+# 写入结果不明确时，延迟回扫；核验只会确认或保留待人工处理，绝不自动重发。
+REPLY_VERIFY_DELAY_SECONDS = 1800
+
+# ---------- 统一写操作风控（保守默认）----------
+REPLY_MIN_INTERVAL_SECONDS = 120
+REPLY_HOURLY_LIMIT = 8
+REPLY_DAILY_LIMIT = 30
+REPLY_ACTIVE_HOURS = "09:00-22:00"
+REPLY_RISK_COOLDOWN_SECONDS = 3600
+
 # ---------- 飞书负面预警(自建应用,留空则不发送)----------
 FEISHU_APP_ID = ""
 FEISHU_APP_SECRET = ""

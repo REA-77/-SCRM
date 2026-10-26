@@ -1,0 +1,7 @@
+{% extends "scrm/base.html" %}
+{% block title %}回复运营报表{% endblock %}
+{% block content %}
+<div class="page-head"><div><h2>📊 回复运营报表</h2><div class="sub">按平台汇总任务状态、近 24 小时确认发送与审计事件。</div></div><button class="btn" id="refresh">刷新</button></div>
+<div class="card"><h3>任务状态</h3><div id="tasks"></div></div><div class="card"><h3>近 24 小时确认发送</h3><div id="sent"></div></div><div class="card"><h3>近 24 小时审计事件</h3><div id="events"></div></div>
+{% endblock %}{% block scripts %}<script>
+const $=id=>document.getElementById(id),show=(id,rows,fields)=>$(id).innerHTML=rows.length?`<table class="data"><thead><tr>${fields.map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${fields.map(x=>`<td>${r[x]??'—'}</td>`).join('')}</tr>`).join('')}</tbody></table>`:'暂无数据';async function load(){const d=await fetch('/scrm/api/reply-report').then(r=>r.json());show('tasks',d.tasks,['platform','status','n']);show('sent',d.sent_24h,['platform','sent','accounts']);show('events',d.events_24h,['event_type','n'])};$('refresh').onclick=load;load();</script>{% endblock %}

@@ -54,6 +54,7 @@
           <th style="width:160px;">昵称</th>
           <th style="width:150px;">所属UP主</th>
           <th style="width:130px;">账号ID</th>
+          <th style="width:105px;">主页链接</th>
           <th style="width:80px;">粉丝</th>
           <th style="width:70px;">状态</th>
           <th style="width:130px;">Cookie 状态</th>
@@ -64,7 +65,7 @@
           <th style="width:130px;">操作</th>
         </tr>
       </thead>
-      <tbody id="tbody"><tr><td colspan="13"><span class="spin"></span> 加载中…</td></tr></tbody>
+      <tbody id="tbody"><tr><td colspan="14"><span class="spin"></span> 加载中…</td></tr></tbody>
     </table>
   </div>
   <div id="pager" style="padding:10px 16px;border-top:1px solid #f3f4f6;"></div>
@@ -194,6 +195,7 @@ function editModal(m) {
       <div class="form-row"><label>昵称 *</label><input id="mNick" value="${S.esc(m.nickname || "")}"></div>
       <div class="form-row"><label>所属UP主</label><select id="mCreator">${creatorOpts}</select></div>
       <div class="form-row"><label>账号ID</label><input id="mAccId" value="${S.esc(m.account_id || "")}"></div>
+      <div class="form-row"><label>主页链接</label><input id="mHomepage" value="${S.esc(m.homepage_url || "")}" placeholder="https://"></div>
       <div class="form-row"><label>粉丝量</label><input id="mFans" value="${m.fans ? S.esc(String(m.fans)) : ""}" placeholder="支持 1.2w / 3万 / 5000"></div>
       <div class="form-row"><label>Bit窗口</label><input id="mBit" value="${S.esc(m.bit_window || "")}"></div>
       <div class="form-row"><label>状态</label>
@@ -215,6 +217,7 @@ function editModal(m) {
         platform, nickname,
         creator_id: body.querySelector("#mCreator").value,
         account_id: body.querySelector("#mAccId").value.trim(),
+        homepage_url: body.querySelector("#mHomepage").value.trim(),
         fans: body.querySelector("#mFans").value.trim(),
         bit_window: body.querySelector("#mBit").value.trim(),
         status: body.querySelector("#mStatus").value,
@@ -231,7 +234,7 @@ function editModal(m) {
 async function load(p, autoCheck = false) {
   const version = ++loadVersion;
   page = p || page || 1;
-  S.$("tbody").innerHTML = `<tr><td colspan="13" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  S.$("tbody").innerHTML = `<tr><td colspan="14" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
   try {
     const params = new URLSearchParams({ page, size });
     const q = S.$("fQ").value.trim();
@@ -252,7 +255,7 @@ async function load(p, autoCheck = false) {
     // 首屏只展示最近一次 Cookie 状态；检测通过“更新 Cookie并检测”按需执行。
   } catch (e) {
     if (version !== loadVersion) return;
-    S.$("tbody").innerHTML = `<tr><td colspan="13" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="14" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
   }
 }
 
@@ -265,7 +268,7 @@ function renderPlatformFilter() {
 
 function render() {
   if (!rows.length) {
-    S.$("tbody").innerHTML = `<tr><td colspan="13"><div class="empty"><div class="big">📱</div>暂无符合筛选条件的运营账号</div></td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="14"><div class="empty"><div class="big">📱</div>暂无符合筛选条件的运营账号</div></td></tr>`;
     S.$("pager").innerHTML = "";
     updateSelection();
     return;
@@ -276,6 +279,7 @@ function render() {
     <td><div class="clamp" title="${S.esc(r.nickname || "")}">${S.esc(r.nickname || "—")}</div></td>
     <td><div class="clamp" title="${S.esc(r.creator_name || "")}">${S.esc(r.creator_name || "未关联")}</div></td>
     <td class="mono" style="font-size:12px;">${S.esc(r.account_id || "—")}</td>
+    <td>${homepageLink(r.homepage_url)}</td>
     <td class="mono">${fmtFans(r.fans)}</td>
     <td>${statusBadge(r.status)}</td>
     <td data-cookie-index="${i}">${cookieBadge(r)}</td>
@@ -304,6 +308,15 @@ function render() {
     });
   });
   S.pager(S.$("pager"), total, page, size, p => load(p));
+}
+
+function homepageLink(value) {
+  const url = String(value || "").trim();
+  if (!url) return "—";
+  if (/^https?:\/\//i.test(url)) {
+    return `<a href="${S.esc(url)}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">打开主页</a>`;
+  }
+  return `<span class="clamp" title="${S.esc(url)}">${S.esc(url)}</span>`;
 }
 
 S.$("addBtn").onclick = () => editModal(null);

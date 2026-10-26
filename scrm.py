@@ -945,6 +945,8 @@ def _create_scrm_tables(cur):
                 "COMMENT 'active运营中/paused暂停/retired停用' AFTER `Bit窗口`"),
         ("备注", "ALTER TABLE `平台运营账号` ADD COLUMN `备注` VARCHAR(500) DEFAULT NULL "
                 "COMMENT '运营备注' AFTER `状态`"),
+        ("主页链接", "ALTER TABLE `平台运营账号` ADD COLUMN `主页链接` VARCHAR(1000) DEFAULT NULL "
+                    "COMMENT '账号主页链接' AFTER `ID`"),
     ):
         cur.execute("SELECT COUNT(*) c FROM information_schema.COLUMNS "
                     "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='平台运营账号' AND COLUMN_NAME=%s", (col,))
@@ -1480,7 +1482,17 @@ def page_comments():
 
 @bp.get("/videos")
 def page_videos():
-    return _page("videos.html", "videos")
+    return _page("videos.html", "videos", video_mode="all", page_title="视频列表", page_desc="九平台视频 / 笔记 / 帖子聚合展示,点击标题直达原内容")
+
+
+@bp.get("/original-videos")
+def page_original_videos():
+    return _page("videos.html", "original_videos", video_mode="original", page_title="原创推荐视频", page_desc="原创分类且产品名称已审核通过的视频")
+
+
+@bp.get("/deal-videos")
+def page_deal_videos():
+    return _page("videos.html", "deal_videos", video_mode="deal", page_title="商单执行视频", page_desc="已关联商单且商单尚未结束或取消的视频")
 
 
 @bp.get("/account-management")
@@ -2013,6 +2025,15 @@ def api_videos():
             return jsonify({"error": "视频分类必须为商单或原创"}), 400
         clauses.append("V.category = %s")
         params.append(category)
+    mode = (request.args.get("mode") or "").strip()
+    if mode == "original":
+        clauses.extend(["V.category = '原创'", "COALESCE(V.product_reviewed, 0) = 1"])
+    elif mode == "deal":
+        clauses.extend([
+            "V.category = '商单'",
+            "EXISTS (SELECT 1 FROM scrm_deal_video DV JOIN scrm_deal D ON D.id=DV.deal_id "
+            "WHERE DV.url=V.url AND DV.category='商单' AND D.status NOT IN ('ended','canceled'))",
+        ])
     vid = (request.args.get("vid") or "").strip()
     if vid:
         clauses.append("V.content_id = %s")
@@ -2044,17 +2065,26 @@ def api_videos():
             """)
             cmap = {(r["src_table"], str(r["content_id"])): r for r in cur.fetchall()}
             commercial_names = {}
-            urls = [str(row.get("url") or "")[:500] for row in rows if row.get("url") and row.get("category") == "商单"]
+            deal_links = {}
+            urls = [str(row.get("url") or "")[:500] for row in rows if row.get("url")]
             if urls:
                 placeholders = ",".join(["%s"] * len(urls))
                 cur.execute(f"""SELECT DV.url,D.brand,D.product,D.model
+                              ,D.id deal_id,D.name deal_name
                               FROM scrm_deal_video DV JOIN scrm_deal D ON D.id=DV.deal_id
-                              WHERE DV.category='商单' AND DV.url IN ({placeholders})""", urls)
+                              WHERE DV.url IN ({placeholders})
+                              ORDER BY D.updated_ts DESC""", urls)
+                matches = cur.fetchall()
                 commercial_names = {
                     str(row.get("url") or ""): _product_display_name(row.get("brand"), row.get("product"), row.get("model"))
-                    for row in cur.fetchall()
+                    for row in matches if row.get("deal_id")
                 }
+                for row in matches:
+                    deal_links.setdefault(str(row.get("url") or ""), {"id": row.get("deal_id"), "name": row.get("deal_name")})
     for r in rows:
+        link = deal_links.get(str(r.get("url") or ""), {})
+        r["deal_id"] = link.get("id")
+        r["deal_name"] = link.get("name")
         if r.get("category") == "商单":
             r["product_name"] = commercial_names.get(str(r.get("url") or "")) or r.get("product_name")
             r["product_reviewed"] = 1
@@ -2806,11 +2836,27 @@ def _media_scope(cur, media, cands, by_plat, tok_idx, with_samples=False):
                      intent_count=int(r["i"] or 0), negative_count=int(r["n"] or 0))
         if with_samples:
             cur.execute(
-                f"SELECT U.src_table, U.src_pk, U.nickname, U.content, U.ctime, U.neg, U.intent, "
+                f"SELECT U.src_table, U.src_pk, U.comment_id, U.parent_comment_id, U.nickname, U.content, U.ctime, U.neg, U.intent, "
                 f"U.comment_type, U.highneg, U.analyzed, U.handled, U.reviewed "
                 f"FROM {_union()} WHERE (U.src_table,U.content_id) IN ({ph}) "
-                f"ORDER BY U.ctime DESC LIMIT 30", args)
+                f"ORDER BY U.ctime DESC LIMIT 300", args)
             samples = _with_platform(cur.fetchall())
+            # 为品牌详情页补充评论树层级，最多展示 12 层；评论内容仍按时间倒序排列。
+            comment_map = {(r.get("src_table"), str(r.get("comment_id"))): r for r in samples if r.get("comment_id") is not None}
+            for r in samples:
+                depth, parent = 0, r.get("parent_comment_id")
+                seen = set()
+                while parent not in (None, "", 0, "0") and depth < 11:
+                    marker = (r.get("src_table"), str(parent))
+                    if marker in seen:
+                        break
+                    seen.add(marker)
+                    parent_row = comment_map.get(marker)
+                    depth += 1
+                    if not parent_row:
+                        break
+                    parent = parent_row.get("parent_comment_id")
+                r["depth"] = depth
     stats.update(deals=deals, videos=videos, comment_samples=samples)
     return stats
 
@@ -3557,6 +3603,36 @@ def api_deal_detail(did):
                                 ORDER BY publish_time DESC, add_ts DESC LIMIT 100""",
                             [f"%{brand}%" for brand in historical_brands])
                 historical_original_videos = cur.fetchall()
+            # 商单展示视频对应的评论，保留父子关系并计算最多 12 层层级。
+            deal_comments = []
+            content_keys = []
+            video_urls = [str(v.get("url") or "")[:500] for v in videos if v.get("url")]
+            if video_urls:
+                vph = ",".join(["%s"] * len(video_urls))
+                cur.execute(f"SELECT src_table,content_id FROM {_content_union()} WHERE url IN ({vph})", video_urls)
+                content_keys = [(x["src_table"], str(x["content_id"])) for x in cur.fetchall()]
+            if content_keys:
+                kph = ",".join(["(%s,%s)"] * len(content_keys))
+                kargs = [v for key in content_keys for v in key]
+                cur.execute(
+                    f"SELECT U.src_table,U.src_pk,U.comment_id,U.parent_comment_id,U.nickname,U.content,U.ctime,U.neg,U.intent,"
+                    f"U.comment_type,U.highneg,U.analyzed,U.handled,U.reviewed FROM {_union()} "
+                    f"WHERE (U.src_table,U.content_id) IN ({kph}) ORDER BY U.ctime DESC LIMIT 300", kargs)
+                deal_comments = _with_platform(cur.fetchall())
+                cmap = {(x.get("src_table"), str(x.get("comment_id"))): x for x in deal_comments if x.get("comment_id") is not None}
+                for x in deal_comments:
+                    depth, parent, seen = 0, x.get("parent_comment_id"), set()
+                    while parent not in (None, "", 0, "0") and depth < 11:
+                        marker = (x.get("src_table"), str(parent))
+                        if marker in seen:
+                            break
+                        seen.add(marker)
+                        parent_row = cmap.get(marker)
+                        depth += 1
+                        if not parent_row:
+                            break
+                        parent = parent_row.get("parent_comment_id")
+                    x["depth"] = depth
         # 详情页自动推进的已发布/KPI已完成状态需要持久化，列表页才能读取到同一状态。
         conn.commit()
     deal["data_completed"] = data_completed
@@ -3567,7 +3643,8 @@ def api_deal_detail(did):
                     "kpi_configs": kpi_configs, "kpi_platforms": KPI_PLATFORMS,
                     "categories": categories, "selling_point_templates": selling_point_templates,
                     "historical_original_videos": historical_original_videos,
-                    "historical_brands": historical_brands})
+                    "historical_brands": historical_brands,
+                    "comment_samples": deal_comments})
 
 
 @bp.get("/api/deals/<int:did>/selling-point-templates")
@@ -5065,6 +5142,7 @@ ACCOUNT_PLATFORM_MAP = {
 def _account_frag():
     return ("SELECT A.`平台` AS platform, A.`昵称` AS nickname, A.`UP主ID` AS creator_id, "
             "C.`昵称` AS creator_name, A.`ID` AS account_id, A.`粉丝` AS fans, "
+            "A.`主页链接` AS homepage_url, "
             "A.`Bit窗口` AS bit_window, A.`状态` AS status, A.`备注` AS note, "
             "A.`cookie` AS cookie, "
             "CASE WHEN TRIM(COALESCE(A.`cookie`, ''))='' THEN 'missing' "
@@ -5081,7 +5159,7 @@ def _account_stats():
     """账号→内容库匹配:按 (内容库 platform, upname) 统计视频/评论/负面/意向
     视频侧 SQL 聚合,评论侧全量聚合一次内存匹配(与 api_videos 同思路,避免 UNION 歧义)"""
     return f"""
-        SELECT A.platform, A.nickname, A.creator_id, A.creator_name, A.account_id, A.fans,
+        SELECT A.platform, A.nickname, A.creator_id, A.creator_name, A.account_id, A.fans, A.homepage_url,
                A.bit_window, A.status, A.note, A.cookie_status, A.cookie_checked_at, A.cookie_check_message,
                COUNT(DISTINCT V.content_id) video_count,
                MAX(V.last_update_ts) latest_update_ts,
@@ -5089,7 +5167,7 @@ def _account_stats():
         FROM ({_account_frag()}) A
         LEFT JOIN {_content_union()} ON V.platform = A.platform AND V.upname = A.nickname
         GROUP BY A.platform, A.nickname, A.creator_id, A.creator_name, A.account_id,
-                 A.fans, A.bit_window, A.status, A.note, A.cookie_status, A.cookie_checked_at, A.cookie_check_message
+                 A.fans, A.homepage_url, A.bit_window, A.status, A.note, A.cookie_status, A.cookie_checked_at, A.cookie_check_message
     """
 
 
@@ -5242,6 +5320,7 @@ def api_account_save():
     vals = dict(
         creator_id=body.get("creator_id"),
         account_id=str(body.get("account_id") or "").strip()[:255],
+        homepage_url=str(body.get("homepage_url") or "").strip()[:1000],
         fans=int(body.get("fans") or 0),
         bit_window=str(body.get("bit_window") or "").strip()[:255],
         status=str(body.get("status") or "active").strip()[:16],
@@ -5273,9 +5352,9 @@ def api_account_save():
                 # 编辑:按原 平台+昵称 定位
                 n = cur.execute("""
                     UPDATE `平台运营账号` SET `平台`=%s, `昵称`=%s, `UP主ID`=%s,
-                        `ID`=%s, `粉丝`=%s, `Bit窗口`=%s, `状态`=%s, `备注`=%s
+                        `ID`=%s, `主页链接`=%s, `粉丝`=%s, `Bit窗口`=%s, `状态`=%s, `备注`=%s
                     WHERE `平台`=%s AND `昵称`=%s
-                """, (platform, nickname, creator_id, vals["account_id"], vals["fans"],
+                """, (platform, nickname, creator_id, vals["account_id"], vals["homepage_url"], vals["fans"],
                       vals["bit_window"], vals["status"], vals["note"],
                       old_platform, old_nickname))
                 if not n:
@@ -5287,9 +5366,9 @@ def api_account_save():
                     return jsonify({"error": "该平台下已存在同名账号"}), 400
                 cur.execute("""
                     INSERT INTO `平台运营账号`
-                        (`平台`,`昵称`,`UP主ID`,`ID`,`粉丝`,`Bit窗口`,`状态`,`备注`)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                """, (platform, nickname, creator_id, vals["account_id"], vals["fans"],
+                        (`平台`,`昵称`,`UP主ID`,`ID`,`主页链接`,`粉丝`,`Bit窗口`,`状态`,`备注`)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (platform, nickname, creator_id, vals["account_id"], vals["homepage_url"], vals["fans"],
                       vals["bit_window"], vals["status"], vals["note"]))
         conn.commit()
     return jsonify({"ok": True})

@@ -92,13 +92,24 @@ class DouyinClient:
         # uncertain，绝不以浏览器重试同一条写请求造成重复评论/私信/关注。
         self.last_write_uncertain: bool = False
 
+    def _session_options(self) -> Dict[str, Any]:
+        """Keep a dead process-wide proxy from hijacking account requests.
+
+        The desktop service may export HTTP(S)_PROXY for unrelated tooling.
+        curl-cffi otherwise inherits it even when each request passes
+        ``proxy=None``.  An account-specific proxy remains supported.
+        """
+        if self.proxy:
+            return {"proxies": {"http": self.proxy, "https": self.proxy}}
+        return {"proxies": {"http": "", "https": ""}}
+
     @asynccontextmanager
     async def session_scope(self):
         """在一个读取任务内复用 curl 会话、Cookie jar 与 msToken。"""
         if self._session is not None:
             yield self
             return
-        self._session = AsyncSession(impersonate=self.impersonate)
+        self._session = AsyncSession(impersonate=self.impersonate, **self._session_options())
         try:
             yield self
         finally:
@@ -108,13 +119,26 @@ class DouyinClient:
             self._ms_token = None
 
     def _headers(self, referer: str = BASE + "/") -> Dict[str, str]:
-        return {
+        headers = {
             "User-Agent": self.ua,
             "Referer": referer,
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": self.accept_language,
             "Cookie": self.cookie,
         }
+        # 真实 Chrome 每个 XHR 都带 client hints;写接口的边缘校验会核对
+        # sec-ch-ua 与 UA 版本是否一致,缺失或矛盾直接 403。
+        m = re.search(r"Chrome/(\d+)\.(\d+)", self.ua or "")
+        if m:
+            major, minor = m.group(1), m.group(2)
+            platform = "macOS" if "Macintosh" in self.ua else "Windows"
+            brand = f'"Chromium";v="{major}", "Google Chrome";v="{major}", "Not;A=Brand";v="99"'
+            headers.update({
+                "sec-ch-ua": brand,
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": f'"{platform}"',
+            })
+        return headers
 
     def _im_request_options(self, referer: str = BASE + "/") -> Dict[str, Any]:
         self._im_sequence_id += 1
@@ -127,7 +151,8 @@ class DouyinClient:
             "referer": referer,
         }
 
-    def _build_url(self, path: str, params: Dict[str, Any]) -> str:
+    def _build_url(self, path: str, params: Dict[str, Any],
+                   body: str = "") -> str:
         q = dict(DEFAULT_PARAMS)
         # Keep direct requests aligned with the account's persistent browser
         # identity.  Cookie, UA/TLS, locale, viewport and proxy all come from
@@ -147,7 +172,9 @@ class DouyinClient:
         q.update({k: v for k, v in params.items() if v is not None})
         q["msToken"] = self._ms_token or gen_false_ms_token()
         qs = urllib.parse.urlencode(q)
-        signed = sign_url(qs, self.ua, fp=self._abogus_fingerprint())
+        # POST 必须把表单 body 原文传入签名(f2 的 ab_dir[40]/[41] 就是 body 哈希);
+        # 签名的 body 与发送的 body 差一个字节,边缘验签就直接 403。
+        signed = sign_url(qs, self.ua, body=body, fp=self._abogus_fingerprint())
         return f"{BASE}{path}?{signed}"
 
     def _abogus_fingerprint(self) -> str:
@@ -165,7 +192,7 @@ class DouyinClient:
         self.last_error = ""
         url = self._build_url(path, params)
         owned = self._session is None
-        cli = self._session or AsyncSession(impersonate=self.impersonate)
+        cli = self._session or AsyncSession(impersonate=self.impersonate, **self._session_options())
         try:
             if self._ms_token is None:
                 # 获取真实 token 失败时 gen_real_ms_token 自身回退随机 token。
@@ -211,25 +238,32 @@ class DouyinClient:
         self.last_error = ""
         self.last_write_uncertain = False
         owned = self._session is None
-        cli = self._session or AsyncSession(impersonate=self.impersonate)
+        cli = self._session or AsyncSession(impersonate=self.impersonate, **self._session_options())
         try:
             if self._ms_token is None:
                 self._ms_token = await gen_real_ms_token(
                     self.ua, timeout=min(self.timeout, 10.0),
                     cookie=self.cookie, proxy=self.proxy)
-            url = self._build_url(path, params)
+            form_str = urllib.parse.urlencode(
+                {k: str(v) for k, v in form.items() if v is not None})
+            url = self._build_url(path, params, body=form_str)
             headers = self._headers(referer)
             headers.update({
                 "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
                 "Origin": BASE,
             })
             response = await cli.post(
-                url, data={k: str(v) for k, v in form.items() if v is not None},
+                url, data=form_str,
                 headers=headers, impersonate=self.impersonate, timeout=self.timeout,
                 proxy=self.proxy or None)
             if response.status_code != 200 or not response.content:
                 self.last_error = (f"http_{response.status_code}"
                                    if response.status_code != 200 else "empty_body")
+                # 边缘拒绝(403/412等)的响应体里有真正的拒绝原因(verify/captcha/risk json),
+                # 只记状态码会让上层永远猜不出根因。截断保存,上层审计可见。
+                if response.status_code != 200 and response.content:
+                    snippet = response.text[:200].replace("\n", " ")
+                    self.last_error = f"http_{response.status_code}:{snippet}"
                 self.last_write_uncertain = (
                     response.status_code >= 500 or response.status_code == 200)
                 return None
@@ -348,7 +382,7 @@ class DouyinClient:
         self.last_error = ""
         self.last_write_uncertain = False
         owned = self._session is None
-        cli = self._session or AsyncSession(impersonate=self.impersonate)
+        cli = self._session or AsyncSession(impersonate=self.impersonate, **self._session_options())
         referer = f"{BASE}/user/{target_sec_uid or target_uid}"
         try:
             body = build_create_conversation_request(
@@ -401,7 +435,7 @@ class DouyinClient:
         self.last_error = ""
         self.last_write_uncertain = False
         owned = self._session is None
-        cli = self._session or AsyncSession(impersonate=self.impersonate)
+        cli = self._session or AsyncSession(impersonate=self.impersonate, **self._session_options())
         try:
             body = build_send_request(
                 str(conv_id), int(conv_type or 1), int(conv_short_id), str(ticket),
@@ -494,7 +528,7 @@ class DouyinClient:
 
         self.last_error = ""
         owned = self._session is None
-        cli = self._session or AsyncSession(impersonate=self.impersonate)
+        cli = self._session or AsyncSession(impersonate=self.impersonate, **self._session_options())
         try:
             body = build_init_request(
                 int(time.time() * 1_000_000), **self._im_request_options())

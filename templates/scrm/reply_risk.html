@@ -1,0 +1,8 @@
+{% extends "scrm/base.html" %}
+{% block title %}回复风控中心{% endblock %}
+{% block content %}
+<div class="page-head"><div><h2>🛡️ 回复风控中心</h2><div class="sub">账号冷却、被拦截任务与待核验任务。解除前请先在平台侧确认。</div></div><button class="btn" id="refresh">刷新</button></div>
+<h3>账号风险状态</h3><div class="card" style="padding:0;overflow:auto"><table class="data"><thead><tr><th>平台</th><th>账号</th><th>冷却至</th><th>原因</th></tr></thead><tbody id="accounts"></tbody></table></div>
+<h3 style="margin-top:24px">需关注任务</h3><div class="card" style="padding:0;overflow:auto"><table class="data"><thead><tr><th>任务</th><th>平台/账号</th><th>状态</th><th>原因</th></tr></thead><tbody id="tasks"></tbody></table></div>
+{% endblock %}{% block scripts %}<script>
+const $=id=>document.getElementById(id),date=t=>t?new Date(t*1000).toLocaleString('zh-CN',{hour12:false}):'—';async function load(){const d=await fetch('/scrm/api/reply-risk').then(r=>r.json());$('accounts').innerHTML=d.accounts.map(x=>`<tr><td>${x.platform}</td><td>${x.account_nickname}</td><td>${date(x.cooldown_until)}</td><td>${S.esc(x.reason||'—')}</td></tr>`).join('')||'<tr><td colspan="4">暂无冷却账号</td></tr>';$('tasks').innerHTML=d.tasks.map(x=>`<tr><td>${x.id}</td><td>${x.platform} / ${x.account_nickname||'—'}</td><td>${x.status}</td><td>${S.esc(x.error_message||'—')}</td></tr>`).join('')||'<tr><td colspan="4">暂无需关注任务</td></tr>'};$('refresh').onclick=load;load();</script>{% endblock %}

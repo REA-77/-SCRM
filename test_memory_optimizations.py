@@ -118,7 +118,7 @@ class TaskValidationTests(unittest.TestCase):
         self.assertEqual(task['reply_suggestion'], 'fresh reply')
         self.assertEqual(task['video_account'], 'author')
 
-    def test_worker_revalidates_and_skips_handled_comment(self):
+    def test_worker_revalidates_and_marks_missing_source_no_action(self):
         conn = MagicMock()
         cur = conn.__enter__.return_value.cursor.return_value.__enter__.return_value
         cur.fetchone.side_effect = [
@@ -128,17 +128,16 @@ class TaskValidationTests(unittest.TestCase):
         with patch.object(auto_tasks, 'get_conn', return_value=conn), patch.object(auto_tasks, 'execute_task') as execute:
             auto_tasks._run_queued_task(90)
         execute.assert_not_called()
-        self.assertIn("status='failed'", cur.execute.call_args.args[0])
+        self.assertTrue(any("status='no_action'" in call.args[0] for call in cur.execute.call_args_list))
 
-    def test_retry_full_queue_does_not_mark_running(self):
+    def test_retry_returns_task_to_persistent_queue(self):
         conn = MagicMock()
         cur = conn.__enter__.return_value.cursor.return_value.__enter__.return_value
         with patch.object(auto_tasks, 'get_conn', return_value=conn), \
-             patch.object(auto_tasks, '_load_task', return_value=({'id': 90}, None)), \
-             patch.object(auto_tasks._TASK_QUEUE, 'submit', return_value='full'):
+             patch.object(auto_tasks, '_load_task', return_value=({'id': 90}, None)):
             response = web.app.test_client().post('/scrm/api/auto-tasks/90/retry')
-        self.assertEqual(response.status_code, 429)
-        cur.execute.assert_not_called()
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(any("status='queued'" in call.args[0] for call in cur.execute.call_args_list))
 
 
 class ExportMemoryTests(unittest.TestCase):

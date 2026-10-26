@@ -34,3 +34,8 @@ persona-preview.json
 bitbrowser_headless_windows.json
 douyin-creator-tools/
 app-runtime*.log
+
+# 本地 Node 依赖、工作簿检查缓存及脚本运行输出
+node_modules/
+.workbook-inspection/
+outputs/
