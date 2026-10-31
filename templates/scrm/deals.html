@@ -28,11 +28,10 @@
     <table class="data">
       <thead>
         <tr>
-          <th>商单名称</th>
+          <th style="width:220px;min-width:220px;">商单名称</th>
           <th style="width:100px;">品牌</th>
           <th style="width:120px;">产品</th>
           <th style="width:140px;">型号</th>
-          <th style="width:100px;">品类</th>
           <th style="width:140px;">订单编号</th>
           <th style="width:170px;">账户</th>
           <th style="width:110px;">媒介公司</th>
@@ -44,7 +43,7 @@
           <th style="width:210px;">操作</th>
         </tr>
       </thead>
-      <tbody id="tbody"><tr><td colspan="14"><span class="spin"></span> 加载中…</td></tr></tbody>
+      <tbody id="tbody"><tr><td colspan="13"><span class="spin"></span> 加载中…</td></tr></tbody>
     </table>
   </div>
   <div class="pager" id="pager" style="padding:12px 14px;"></div>
@@ -67,28 +66,27 @@ function params() {
 }
 
 async function load() {
-  S.$("tbody").innerHTML = `<tr><td colspan="14" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
+  S.$("tbody").innerHTML = `<tr><td colspan="13" class="loading"><span class="spin"></span> 加载中…</td></tr>`;
   try {
     const d = await S.api("/deals?" + params().toString());
     rows = d.rows; total = d.total;
     render();
     S.pager(S.$("pager"), total, page, size, p => { page = p; load(); });
   } catch (e) {
-    S.$("tbody").innerHTML = `<tr><td colspan="14" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="13" style="color:#dc2626;padding:20px;">加载失败:${S.esc(e.message)}</td></tr>`;
   }
 }
 
 function render() {
   if (!rows.length) {
-    S.$("tbody").innerHTML = `<tr><td colspan="14"><div class="empty"><div class="big">📑</div>暂无商单,询单标记「合作成功」后自动生成</div></td></tr>`;
+    S.$("tbody").innerHTML = `<tr><td colspan="13"><div class="empty"><div class="big">📑</div>暂无商单,询单标记「合作成功」后自动生成</div></td></tr>`;
     return;
   }
   S.$("tbody").innerHTML = rows.map(r => `<tr>
-    <td><a href="/scrm/deals/${r.id}"><div class="clamp">${S.esc(r.name || "-")}</div></a></td>
+    <td><a href="/scrm/deals/${r.id}"><div class="deal-name-clamp">${S.esc(r.name || "-")}</div></a></td>
     <td>${S.esc(r.brand || "-")}</td>
     <td><div class="clamp sub2">${S.esc(r.product || "-")}</div></td>
     <td><div class="clamp sub2">${S.esc(r.model || "-")}</div></td>
-    <td>${S.esc(r.category || "—")}</td>
     <td class="mono">${S.esc(r.order_no || "—")}</td>
     <td><div class="clamp sub2">${S.esc(r.platform_accounts || "—")}</div></td>
     <td>${S.esc(r.media_company || "-")}</td>
@@ -97,7 +95,7 @@ function render() {
     <td>${S.badge(r.display_status || STATUS_TEXT[r.status] || r.status, STATUS_COLOR[r.status] || "gray", true)}</td>
     <td class="nowrap muted">${r.expect_ts ? dateOnly(r.expect_ts) : "-"}</td>
     <td class="nowrap muted">${r.actual_publish_date || (r.display_expect_ts ? dateOnly(r.display_expect_ts) : "—")}</td>
-    <td class="nowrap"><button class="btn sm" data-sync-id="${r.id}">同步参数</button> <a class="btn sm primary" href="/scrm/deals/${r.id}?edit=1">编辑</a> <a class="btn sm" href="/scrm/deals/${r.id}">详情</a> <button class="btn sm danger" data-del-deal="${r.id}">删除</button></td>
+    <td><div class="deal-row-actions"><button class="btn sm" data-sync-id="${r.id}">同步参数</button><a class="btn sm primary" href="/scrm/deals/${r.id}?edit=1">编辑</a><button class="btn sm danger" data-del-deal="${r.id}">删除</button></div></td>
   </tr>`).join("");
   S.$$('[data-sync-id]', S.$("tbody")).forEach(btn => {
     btn.onclick = () => openProductSync(rows.find(r => Number(r.id) === Number(btn.dataset.syncId)));

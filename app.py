@@ -14,7 +14,7 @@ import time
 import threading
 from functools import wraps
 
-from flask import Flask, request, jsonify, Response, render_template, stream_with_context
+from flask import Flask, request, jsonify, Response, render_template, stream_with_context, g
 
 from config import COMMENT_TABLES
 from db import (
@@ -22,7 +22,8 @@ from db import (
     parse_filters, build_where, ensure_comment_columns, ensure_content_category_columns, mark_self_replies_handled,
 )
 from analyzer import analyzer_loop, get_status_dict
-from scrm import bp as scrm_bp, init_scrm, start_product_recognition_worker
+from scrm import (bp as scrm_bp, init_scrm, start_product_recognition_worker, require_scrm_login,
+                  PERMISSION_CATALOG)
 from knowledge import init_kb, kb_bp
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
@@ -32,6 +33,27 @@ app.register_blueprint(scrm_bp)
 app.register_blueprint(kb_bp)
 from auto_tasks import bp as auto_tasks_bp
 app.register_blueprint(auto_tasks_bp)
+
+
+@app.before_request
+def protect_scrm_auxiliary_modules():
+    """知识库和自动任务由独立蓝图提供，也必须进入同一 SCRM 会话/权限链路。"""
+    if request.blueprint in {"kb", "auto_tasks"}:
+        return require_scrm_login()
+    return None
+
+
+@app.context_processor
+def inject_scrm_permission_context():
+    """独立蓝图渲染 SCRM 基础模板时，同样得到当前会话的菜单权限。"""
+    permissions = getattr(g, "scrm_permissions", frozenset())
+    is_admin = bool(getattr(g, "scrm_is_admin", False))
+    allowed_pages = [key for key, _ in PERMISSION_CATALOG["page"]
+                     if is_admin or ("page", key) in permissions]
+    return {"current_user": getattr(g, "scrm_user", None), "is_scrm_admin": is_admin,
+            "allowed_pages": allowed_pages}
+
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("app")
 

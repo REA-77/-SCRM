@@ -24,6 +24,11 @@ BASE_DIR = Path(__file__).resolve().parent
 BIT_API = os.getenv("BITBROWSER_API", "http://127.0.0.1:54345")
 _BIT_WINDOW_LOCKS = {}
 _BIT_WINDOW_LOCKS_GUARD = threading.Lock()
+# Platform APIs must not inherit a stale desktop proxy (for example
+# HTTP_PROXY=http://127.0.0.1:9). BitBrowser/local control requests may still
+# use the normal environment, but Bilibili's public API should go direct.
+_DIRECT_HTTP = requests.Session()
+_DIRECT_HTTP.trust_env = False
 
 
 def _bit_window_lock(window_id):
@@ -48,6 +53,8 @@ def _reset_cdp_page_targets(cdp_http):
         target_id = str(target.get('id') or '').strip()
         if target.get('type') != 'page' or not target_id:
             continue
+        cdp = {}
+        cdp_http = ""
         try:
             requests.get(f'{address}/json/close/{target_id}', timeout=5)
             closed += 1
@@ -87,7 +94,7 @@ def verify_comment_exists(task):
         rpid = str(task.get('comment_id') or '').strip()
         if not oid or not rpid:
             return None
-        response = requests.get('https://api.bilibili.com/x/v2/reply/reply', params={
+        response = _DIRECT_HTTP.get('https://api.bilibili.com/x/v2/reply/reply', params={
             'type': '1', 'oid': oid, 'root': rpid,
         }, headers=bilibili_headers(cookie, task.get('bvid')), timeout=15)
         payload = response.json()
@@ -149,22 +156,29 @@ def fetch_web_tasks(limit, platform, table):
         with conn.cursor() as cur:
             content_join = " LEFT JOIN zhihu_content z ON z.content_id=c.content_id" if table == 'zhihu_comment' else ''
             content_field = ", COALESCE(NULLIF(c.content_url, ''), z.content_url) AS reply_url" if table == 'zhihu_comment' else ''
+            # XHS browser automation supports the native delete flow as well;
+            # Zhihu remains reply-only until it has an equivalent verified path.
+            action_filter = "IN ('reply', 'delete')" if platform == '小红书' else "='reply'"
             cur.execute(f"""SELECT t.id AS task_id, t.*, c.*{content_field} FROM comment_auto_task t JOIN `{table}` c ON c.id=t.src_pk{content_join}
-                WHERE t.status='pending' AND t.platform=%s AND t.action_type='reply' ORDER BY t.id LIMIT %s""", (platform, limit))
+                WHERE t.status='pending' AND t.platform=%s AND t.action_type {action_filter} ORDER BY t.id LIMIT %s""", (platform, limit))
             return cur.fetchall()
 
 def call_web_reply(task, dry_run=False):
+    action = str(task.get('action_type') or 'reply').strip().lower()
     message = str(task.get('reply_suggestion') or '').strip()
-    if not message or message.startswith('⚠ 分析失败'): raise RuntimeError('缺少可发送的推荐回复')
+    if action != 'delete' and (not message or message.startswith('⚠ 分析失败')): raise RuntimeError('缺少可发送的推荐回复')
     if dry_run: return {'success': True, 'status': 'dry-run'}
     if task['platform'] == '小红书':
+        # XHS is browser-only in this deployment. Do not allow an inherited
+        # environment value or an old worker to silently fall back to the API.
+        browser_only = True
         from xhs_reply import reply_api
         account = None
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT cookie,凭据 FROM `平台运营账号` WHERE 平台='小红书' AND 昵称=%s", (task.get('account_nickname'),))
                 account = cur.fetchone()
-        if account and account.get('cookie') and account.get('凭据'):
+        if account and account.get('cookie') and account.get('凭据') and not browser_only:
             meta = json.loads(account['凭据']) if isinstance(account['凭据'], str) else account['凭据']
             cookies = []
             for part in str(account['cookie']).split(';'):
@@ -184,10 +198,68 @@ def call_web_reply(task, dry_run=False):
             rows = (requests.post(f"{BIT_API}/browser/list", json={"page": 0, "pageSize": 200}, timeout=30).json().get("data") or {}).get("list") or []
             match = next((r for r in rows if str(r.get("seq")) == browser_id), None)
             if match: browser_id = str(match.get("id"))
-        result = asyncio.run(reply_browser(str(task.get('note_id')), message,
-            browser_id=browser_id, target_comment_id=str(task.get('comment_id') or ''),
-            xsec_token=str(task.get('note_url') or '').split('xsec_token=')[-1].split('&')[0] if 'xsec_token=' in str(task.get('note_url') or '') else '',
-            timeout_seconds=120))
+        # Match the Douyin browser flow: open the profile and preflight its
+        # CDP targets before the Node worker attaches. XHS pages often leave a
+        # stale note-detail renderer behind; Playwright can otherwise connect
+        # to the websocket but hang while enumerating that target.
+        cdp = {}
+        cdp_http = ""
+        try:
+            opened = requests.post(
+                f"{BIT_API}/browser/open", json={"id": browser_id}, timeout=60
+            )
+            opened.raise_for_status()
+            cdp = opened.json().get("data") or {}
+            cdp_http = str(cdp.get("http") or "").strip()
+            if cdp_http and "://" not in cdp_http:
+                cdp_http = "http://" + cdp_http
+            preflight_ok = False
+            if cdp_http:
+                try:
+                    subprocess.run(
+                        ["pwsh", "-NoProfile", "-File", str(BASE_DIR / "bitbrowser-cdp-check.ps1"),
+                         "-Port", cdp_http.rsplit(":", 1)[-1], "-CloseDead"],
+                        cwd=str(BASE_DIR), capture_output=True, text=True,
+                        timeout=30, check=True,
+                    )
+                    preflight_ok = True
+                except Exception:
+                    pass
+                if not preflight_ok:
+                    _reset_cdp_page_targets(cdp_http)
+        except Exception:
+            # The Node worker still performs the authoritative open/connect;
+            # this diagnostic step must not hide its actual error.
+            pass
+        browser_payload = {
+            'action': action,
+            'noteId': str(task.get('note_id')),
+            'content': message,
+            'browserId': browser_id,
+            'targetCommentId': str(task.get('comment_id') or ''),
+            'targetText': str(task.get('content') or ''),
+            'xsecToken': str(task.get('note_url') or '').split('xsec_token=')[-1].split('&')[0] if 'xsec_token=' in str(task.get('note_url') or '') else '',
+            'timeoutSeconds': 120,
+            'bitApiUrl': BIT_API,
+            'cdpWebSocket': str((cdp or {}).get('ws') or ''),
+            'cdpHttp': cdp_http,
+        }
+        # Run Playwright in a fresh main process. The dispatcher itself runs
+        # platform tasks in a background thread, which can trigger WinError 5
+        # when asyncio creates Playwright's Windows overlapped pipes.
+        worker_script = str(BASE_DIR / 'douyin-creator-tools' / 'xhs-browser-reply.mjs')
+        proc = subprocess.run(
+            ['node', worker_script],
+            input=json.dumps(browser_payload, ensure_ascii=False),
+            # CDP attachment may use the shared 180s connection budget; allow
+            # the worker to return a stage-specific error instead of killing
+            # it at 150s with only an opaque subprocess timeout.
+            text=True, capture_output=True, timeout=240,
+            cwd=str(BASE_DIR / 'douyin-creator-tools')
+        )
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or proc.stdout or '小红书浏览器子进程失败')[-1000:])
+        result = json.loads(proc.stdout.strip().splitlines()[-1])
         if result.get('status') != 'success': raise RuntimeError(result.get('error') or '小红书回复失败')
         return result
     from zhihu_reply import reply_comment
@@ -439,28 +511,65 @@ async def _post_douyin_reply_direct(task, cookie_header, browser_identity):
         return {"replyPlanId": comment_id, "status": "failed", "error": "缺少可发送的推荐回复"}
     if not aweme_id or not comment_id:
         return {"replyPlanId": comment_id, "status": "failed", "error": "缺少作品 ID 或目标评论 ID"}
-    client_type = _load_douyin_commenter()
-    client = client_type(
-        cookie_header, browser_identity["ua"], timeout=25,
-        locale=browser_identity["locale"],
-        screen_width=browser_identity["width"],
-        screen_height=browser_identity["height"],
-    )
-    async with client.session_scope():
-        ok, sent_comment_id, error = await client.post_comment(
-            aweme_id, message, reply_comment_id=comment_id
+    submitted = False
+    try:
+        client_type = _load_douyin_commenter()
+        client = client_type(
+            cookie_header, browser_identity["ua"], timeout=25,
+            locale=browser_identity["locale"],
+            screen_width=browser_identity["width"],
+            screen_height=browser_identity["height"],
         )
+        async with client.session_scope():
+            # From this point a transport failure cannot prove that the
+            # platform did not persist the reply.  Preserve that distinction
+            # for the dispatcher instead of allowing a second send path.
+            submitted = True
+            ok, sent_comment_id, error = await client.post_comment(
+                aweme_id, message, reply_comment_id=comment_id
+            )
+    except Exception as exc:
+        error = f"{type(exc).__name__}:{exc}"
+        category = _classify_douyin_reply_error(error)
+        return {
+            "replyPlanId": comment_id,
+            "status": "uncertain" if submitted else "failed",
+            "error": ("API 调用后状态未知，请核对，勿直接重发：" if submitted else "API 调用前失败：") + error,
+            "failure_category": category,
+        }
     if ok:
         return {
             "replyPlanId": comment_id,
             "status": "replied",
             "sentCommentId": sent_comment_id,
         }
+    category = _classify_douyin_reply_error(error)
     return {
         "replyPlanId": comment_id,
         "status": "uncertain" if str(error).startswith("write_uncertain:") else "failed",
         "error": error or "抖音未返回可确认的发表结果",
+        "failure_category": category,
     }
+
+
+def _classify_douyin_reply_error(error):
+    """Return an auditable category without relying on a successful HTTP code.
+
+    The signed client intentionally retains a short response snippet for an
+    edge rejection, so classify the complete string rather than only its
+    prefix.  Categories mirror the reply adapter contract and are safe to
+    show in task evidence; no cookies or request payloads are included.
+    """
+    text = str(error or "").lower()
+    if any(marker in text for marker in ("cookie", "登录", "session", "logged_out", "auth")):
+        return "auth"
+    if any(marker in text for marker in ("验证码", "风控", "频控", "captcha", "verify", "429", "412")):
+        return "risk_control"
+    if "http_403" in text:
+        return "request_rejected"
+    if any(marker in text for marker in ("timeout", "timed out", "超时", "连接", "network", "empty_body", "invalid_json", "http_5")):
+        return "network"
+    return "platform"
 
 
 def _run_douyin_browser_plans_unlocked(tasks, cookie_header, account_name):
@@ -601,7 +710,13 @@ def _run_douyin_browser_delete(tasks, cookie_header, account_name):
 
 
 def run_douyin_reply(tasks, dry_run=False):
-    """Reply through the signed API using the Cookie profile's real identity."""
+    """Reply through the signed API using the Cookie profile's real identity.
+
+    A reply is sent through exactly one write path per execution.  In
+    particular, an API rejection is reported for review rather than silently
+    retried through the browser, since an intermediary response is not a
+    sufficient proof that no comment was created.
+    """
     if not tasks:
         return []
     first = tasks[0]
@@ -614,6 +729,20 @@ def run_douyin_reply(tasks, dry_run=False):
             {"replyPlanId": str(task.get("comment_id") or ""), "status": "dry_run"}
             for task in tasks
         ]
+    # Explicit browser-only mode for accounts/tasks that must avoid the
+    # signed comment API. The existing browser flow verifies the target
+    # comment and submits through the creator-center UI.
+    # Browser/CDP is the safe default for the current deployment. An explicit
+    # DOUYIN_REPLY_MODE=api is required to opt back into signed API writes.
+    browser_only = str(os.getenv("DOUYIN_REPLY_MODE", "browser")).strip().lower() in {
+        "browser", "web", "ui"
+    }
+    if browser_only:
+        return _run_douyin_browser_plans(
+            tasks,
+            cookie_header,
+            first.get("account_nickname")
+        )
     delete_tasks = [task for task in tasks if task.get("action_type") == "delete"]
     reply_tasks = [task for task in tasks if task.get("action_type") != "delete"]
     results = []
@@ -626,19 +755,9 @@ def run_douyin_reply(tasks, dry_run=False):
     # 同一账号/Bit窗口的任务共享一次真实环境读取；发送仍保持串行，
     # 避免同一 profile 并发造成请求节奏异常或重复提交。
     identity = get_douyin_browser_identity(first.get("bit_window"))
-    fallback_tasks = []
     for task in reply_tasks:
         result = asyncio.run(_post_douyin_reply_direct(task, cookie_header, identity))
-        # A definite HTTP 403 is a rejected direct write, not an uncertain
-        # write.  Fall back to the headless creator-center flow automatically.
-        if str(result.get("error") or "").startswith(("http_403", "api_rejected:")):
-            fallback_tasks.append(task)
-        else:
-            results.append(result)
-    if fallback_tasks:
-        results.extend(_run_douyin_browser_plans(
-            fallback_tasks, cookie_header, first.get("account_nickname")
-        ))
+        results.append(result)
     return results
 
 
@@ -716,7 +835,7 @@ def call_bilibili(task, dry_run=False):
             "root": root,
             "parent": rpid,
         })
-    resp = requests.post(url, headers=bilibili_headers(cookie, task.get("bvid")), data=data, timeout=30)
+    resp = _DIRECT_HTTP.post(url, headers=bilibili_headers(cookie, task.get("bvid")), data=data, timeout=30)
     try:
         payload = resp.json()
     except Exception:
@@ -772,14 +891,30 @@ def process(limit, dry_run=False):
                     "replied", "deleted", "dry_run", "dry_run_delete"
                 )
             }
+            unmatched_success_results = [
+                r for r in results
+                if r.get("status") in {"replied", "deleted", "dry_run", "dry_run_delete"}
+            ]
             for task in group:
-                if str(task["comment_id"]) in success_ids:
+                match = next((r for r in results if str(r.get("replyPlanId")) == str(task["comment_id"])), None)
+                # Older browser results could lose replyPlanId after a DOM
+                # delete, even though the sole planned delete returned
+                # ``deleted``. Associate that unambiguous result with the
+                # only task in the group instead of recording error=deleted.
+                if match is None and len(group) == 1 and len(results) == 1:
+                    match = results[0]
+                if match is None and unmatched_success_results:
+                    # Some old browser paths returned a result without the
+                    # original plan id. Keep result order as a safe fallback
+                    # when the successful result is unambiguous for this task.
+                    match = unmatched_success_results.pop(0)
+                if (match and match.get("status") in {"replied", "deleted", "dry_run", "dry_run_delete"}) or str(task["comment_id"]) in success_ids:
                     if not dry_run:
                         mark_comment_handled(task["comment_id"])
                     set_task_status(task["id"], "success")
                     print(f"  success task={task['id']} comment_id={task['comment_id']}")
                 else:
-                    match = next((r for r in results if str(r.get("replyPlanId")) == str(task["comment_id"])), {})
+                    match = match or {}
                     error = match.get("error") or match.get("status") or "未返回成功结果"
                     status = "uncertain" if match.get("status") == "uncertain" else "failed"
                     set_task_status(task["id"], status, error)

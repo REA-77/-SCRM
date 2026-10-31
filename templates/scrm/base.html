@@ -6,7 +6,7 @@
 <title>{% block title %}SCRM 工作台{% endblock %} · 觅牛文化</title>
 <link rel="stylesheet" href="/static/scrm/app.css">
 </head>
-<body class="theme-night" data-active="{{ active }}">
+<body class="theme-night" data-active="{{ active }}" data-media-account="{{ '1' if current_user and current_user.media_id else '0' }}">
 <script>
   try { if (localStorage.getItem("scrm.theme") === "light") document.body.classList.remove("theme-night"); } catch (_) {}
 </script>
@@ -19,7 +19,7 @@
     <button class="theme-btn" type="button" data-theme-toggle="dark" aria-pressed="true">深色</button>
   </div>
   {% if current_user %}<span class="muted" style="font-size:13px">👤 {{ current_user.name }}</span><form method="post" action="/scrm/logout" style="margin:0"><button class="nav-link" type="submit">退出登录</button></form>{% endif %}
-  <a class="nav-link" href="/" target="_blank">📊 数据总库</a>
+  <a class="nav-link" href="http://192.168.11.200:8080/" target="_blank" rel="noopener">📊 了解更多</a>
 </header>
 
 <div class="layout">
@@ -52,10 +52,15 @@
 
     <div class="group-label">品牌方触达</div>
     <a class="nav-item" data-key="brands" href="/scrm/brands"><span class="ico">🏢</span>品牌聚合</a>
+    <a class="nav-item" data-key="deals" href="/scrm/deals"><span class="ico">📑</span>商单管理</a>
+    <a class="nav-item" data-key="rebate_reconciliations" href="/scrm/rebate-reconciliations"><span class="ico">💰</span>返点对账</a>
+    <a class="nav-item" data-key="payment_accounts" href="/scrm/settings?tab=payment"><span class="ico">🏦</span>收款账户</a>
+    <a class="nav-item" data-key="media" href="/scrm/media"><span class="ico">🤝</span>合作媒介</a>
+
+    <div class="group-label">商务管理</div>
+    <a class="nav-item" data-key="business_kpi" href="/scrm/business-kpi"><span class="ico">📊</span>商务KPI</a>
     <a class="nav-item" data-key="brand_funnel" href="/scrm/brands/funnel"><span class="ico">🔻</span>转化漏斗</a>
     <a class="nav-item" data-key="inquiries" href="/scrm/inquiries"><span class="ico">📨</span>商务询单</a>
-    <a class="nav-item" data-key="deals" href="/scrm/deals"><span class="ico">📑</span>商单管理</a>
-    <a class="nav-item" data-key="media" href="/scrm/media"><span class="ico">🤝</span>合作媒介</a>
 
     <div class="group-label">系统设置</div>
     <a class="nav-item" data-key="settings" href="/scrm/settings"><span class="ico">⚙️</span>设置管理</a>
@@ -63,6 +68,33 @@
     <a class="nav-item" data-key="brand_management" href="/scrm/brand-management"><span class="ico">🏷️</span>品牌管理</a>
     <a class="nav-item" data-key="permission_management" href="/scrm/permission-management"><span class="ico">🛡️</span>权限管理</a>
   </aside>
+  <script>
+    // 页面权限由服务端会话计算后嵌入，避免受限菜单在首次渲染时闪现。
+    (() => {
+      const allowed = new Set({{ allowed_pages|default([])|tojson }});
+      const isAdmin = {{ is_scrm_admin|default(false)|tojson }};
+      const pageForNav = {
+        original_videos: 'videos', deal_videos: 'videos', business_kpi: 'settings', payment_accounts: 'settings', permission_management: 'permission-management',
+        reply_inbox: null, auto_tasks: 'auto_tasks', reply_risk: null, reply_report: null
+      };
+      document.querySelectorAll('.side .nav-item').forEach(item => {
+        const page = item.dataset.permissionPage || (Object.prototype.hasOwnProperty.call(pageForNav, item.dataset.key)
+          ? pageForNav[item.dataset.key] : item.dataset.key);
+        if (!isAdmin && (!page || !allowed.has(page))) item.hidden = true;
+      });
+      document.querySelectorAll('.side .group-label').forEach(label => {
+        let node = label.nextElementSibling, hasVisibleLink = false;
+        while (node && !node.classList.contains('group-label')) {
+          if (node.classList.contains('nav-item') && !node.hidden) hasVisibleLink = true;
+          node = node.nextElementSibling;
+        }
+        label.hidden = !hasVisibleLink;
+      });
+      // 只有详情页等非导航权限时，不保留一块空白的侧边栏。
+      const side = document.querySelector('.side');
+      if (side && !side.querySelector('.nav-item:not([hidden])')) side.hidden = true;
+    })();
+  </script>
 
   <main class="content">
     {% block content %}{% endblock %}
@@ -70,6 +102,7 @@
 </div>
 
 <script src="/static/scrm/app.js"></script>
+{% if current_user and current_user.media_id %}<script src="/static/scrm/media-onboarding.js"></script>{% endif %}
 <script>
   // 侧边栏高亮
   (() => {

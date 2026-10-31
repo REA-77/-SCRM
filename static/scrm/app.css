@@ -29,6 +29,8 @@
   --radius: 12px;
 }
 * { box-sizing: border-box; }
+/* 权限脚本通过 hidden 标记移除菜单；须覆盖 .nav-item 的 display:flex 规则。 */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -236,6 +238,9 @@ table.data tbody tr.row-intent { background: var(--amber-soft); }
 table.data tbody tr.row-overdue { background: #fff1f2; }
 td.cell-content { max-width: 360px; white-space: normal; }
 td.cell-content .clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.deal-name-clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.55; word-break: break-word; }
+.deal-row-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 72px; }
+.deal-row-actions .btn { text-align: center; }
 .comment-preview { position: relative; cursor: help; }
 .comment-tooltip {
   display: none; position: fixed; z-index: 1000; width: min(460px, 42vw); max-height: 220px;

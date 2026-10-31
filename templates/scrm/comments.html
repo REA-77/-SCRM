@@ -64,6 +64,7 @@
   <input id="fAuthor" placeholder="作者昵称（视频/笔记原作者）">
   <input id="fQ" placeholder="评论内容关键字">
   <input id="fVid" placeholder="视频/笔记 ID 精确筛选">
+  <input id="fCommentId" placeholder="评论 ID 精确筛选">
   <button class="btn primary" id="searchBtn">🔍 筛选</button>
   <button class="btn" id="resetBtn">重置</button>
 </div>
@@ -109,7 +110,7 @@ let threadPages = new Map(), loadVersion = 0;
 const regeneratingReplies = new Set();
 const filterFields = {
   platform: "fPlatform", status: "fStatus", intent: "fIntent",
-  sentiment: "fSentiment", self_reply: "fSelf", days: "fDays", user: "fUser", author: "fAuthor", q: "fQ", vid: "fVid",
+  sentiment: "fSentiment", self_reply: "fSelf", days: "fDays", user: "fUser", author: "fAuthor", q: "fQ", vid: "fVid", comment_id: "fCommentId",
 };
 
 function params() {
@@ -125,6 +126,7 @@ function params() {
   if (v("fAuthor")) p.set("author", v("fAuthor"));
   if (v("fQ")) p.set("q", v("fQ"));
   if (v("fVid")) p.set("vid", v("fVid"));
+  if (v("fCommentId")) p.set("comment_id", v("fCommentId"));
   p.set("page", page); p.set("size", size);
   return p;
 }
@@ -389,7 +391,7 @@ S.$("resetBtn").onclick = () => {
   Object.values(filterFields).forEach(id => S.$(id).value = "");
   page = 1; load();
 };
-["fQ","fUser","fAuthor","fVid"].forEach(id => S.$(id).addEventListener("keydown", e => {
+["fQ","fUser","fAuthor","fVid","fCommentId"].forEach(id => S.$(id).addEventListener("keydown", e => {
   if (e.key === "Enter") { page = 1; load(); }
 }));
 

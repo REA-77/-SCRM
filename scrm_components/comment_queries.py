@@ -76,6 +76,10 @@ def comment_filters(args, alias="U", now=None):
     if video_id:
         clauses.append(f"{alias}.content_id = %s")
         params.append(video_id)
+    comment_id = (args.get("comment_id") or args.get("id") or "").strip()
+    if comment_id:
+        clauses.append(f"CAST({alias}.comment_id AS CHAR) = %s")
+        params.append(comment_id)
     self_reply = args.get("is_self", "")
     if self_reply in {"0", "1"}:
         # 本人回复：评论人昵称与其所属内容作者昵称一致（NULL 安全比较）。

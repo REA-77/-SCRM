@@ -3,18 +3,18 @@
 {% block content %}
 <style>
 /* 商单详情：将状态、关键指标和执行内容拆开，让重要信息先被看见。 */
-.deal-page-head{margin-bottom:18px}.deal-back{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px;font-weight:600}.deal-back:hover{color:var(--primary);text-decoration:none}.deal-page-head h2{margin:8px 0 0;font-size:24px;letter-spacing:-.025em}.deal-hero{position:relative;overflow:hidden;display:flex;justify-content:space-between;gap:28px;margin-bottom:14px;padding:22px 24px;border:1px solid rgba(40,122,73,.17);border-radius:16px;background:linear-gradient(115deg,#fff 0%,#f4faf5 58%,#edf8ef 100%);box-shadow:0 10px 28px rgba(32,92,51,.08)}.deal-hero::after{content:"";position:absolute;right:-80px;top:-100px;width:270px;height:270px;border-radius:50%;background:radial-gradient(circle,rgba(102,187,135,.14),transparent 67%);pointer-events:none}.deal-hero-main{position:relative;z-index:1;min-width:0}.deal-eyebrow{display:flex;align-items:center;gap:8px;margin-bottom:9px;color:#64748b;font-size:12px;font-weight:650;letter-spacing:.06em}.deal-eyebrow i{width:7px;height:7px;border-radius:50%;background:#5c9e69;box-shadow:0 0 0 4px rgba(92,158,105,.12)}.deal-hero-name{font-size:23px;font-weight:750;letter-spacing:-.025em;word-break:break-word}.deal-meta{display:flex;gap:8px 16px;flex-wrap:wrap;margin-top:12px;color:var(--text-2);font-size:12.5px}.deal-meta span{display:inline-flex;align-items:center;gap:5px}.deal-meta b{color:var(--text);font-weight:600}.deal-progress{position:relative;z-index:1;display:flex;align-items:center;gap:0;flex-shrink:0;padding:5px 0}.deal-step{position:relative;display:grid;justify-items:center;gap:6px;min-width:74px;color:#9ca3af;font-size:11px;text-align:center}.deal-step:not(:last-child)::after{content:"";position:absolute;left:calc(50% + 15px);top:15px;width:calc(100% - 30px);height:1px;background:#dce2e9}.deal-step i{display:grid;place-items:center;width:30px;height:30px;border:1px solid #dce2e9;border-radius:50%;background:#fff;color:#9ca3af;font-style:normal;font-size:13px}.deal-step.done,.deal-step.active{color:#426f4e;font-weight:650}.deal-step.done i{border-color:#6dae7a;background:#eaf7ec;color:#347442}.deal-step.active i{border-color:var(--primary);background:var(--primary);color:#fff;box-shadow:0 4px 12px rgba(40,122,73,.24)}.deal-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}.deal-kpi{min-height:105px;padding:16px 17px;border:1px solid var(--border);border-radius:13px;background:#fff;box-shadow:var(--shadow)}.deal-kpi-label{display:flex;align-items:center;justify-content:space-between;color:var(--text-2);font-size:12px}.deal-kpi-label i{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:#eaf6ed;color:var(--primary);font-size:14px;font-style:normal}.deal-kpi:nth-child(2) .deal-kpi-label i{background:#eefaf5;color:#17875c}.deal-kpi:nth-child(3) .deal-kpi-label i{background:#fff7e9;color:#c98319}.deal-kpi:nth-child(4) .deal-kpi-label i{background:#f4f5f7;color:#667085}.deal-kpi-value{margin-top:9px;font-size:23px;font-weight:750;letter-spacing:-.025em}.deal-kpi-foot{margin-top:3px;color:var(--text-3);font-size:11.5px}.deal-detail-grid{grid-template-columns:minmax(300px,.78fr) minmax(680px,1.92fr)!important;align-items:start}.deal-detail-grid .card{border-radius:13px}.deal-detail-grid .card-title{padding-bottom:11px;border-bottom:1px solid #eef0f3}.deal-detail-grid .kvlist{grid-template-columns:88px 1fr;gap:10px 12px}.deal-detail-grid .kvlist .k{font-size:12px;color:#8a919e}.deal-detail-grid .kvlist .v{font-size:13px;line-height:1.55}.deal-detail-grid .table-wrap{margin:-2px -2px}.deal-detail-grid table.data{font-size:12.5px}.deal-detail-grid table.data th{background:#f6fbf7}.deal-detail-grid table.data td{padding-top:11px;padding-bottom:11px}.deal-empty{padding:38px 20px!important}.deal-empty .big{font-size:30px!important}@media(max-width:1180px){.deal-hero{align-items:flex-start;flex-direction:column}.deal-progress{width:100%;justify-content:flex-start}.deal-kpis{grid-template-columns:repeat(2,1fr)}.deal-detail-grid{grid-template-columns:1fr!important}}@media(max-width:640px){.deal-page-head h2{font-size:21px}.deal-hero{padding:19px}.deal-hero-name{font-size:20px}.deal-progress{overflow-x:auto;padding-bottom:3px}.deal-step{min-width:68px}.deal-kpis{grid-template-columns:1fr 1fr;gap:9px}.deal-kpi{min-height:96px;padding:13px}.deal-kpi-value{font-size:20px}.deal-detail-grid .kvlist{grid-template-columns:78px 1fr}}
+.deal-page-head{margin-bottom:18px}.deal-back{display:inline-flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px;font-weight:600}.deal-back:hover{color:var(--primary);text-decoration:none}.deal-page-head h2{margin:8px 0 0;font-size:24px;letter-spacing:-.025em}.deal-hero{position:relative;overflow:hidden;display:flex;justify-content:space-between;gap:28px;margin-bottom:14px;padding:22px 24px;border:1px solid rgba(40,122,73,.17);border-radius:16px;background:linear-gradient(115deg,#fff 0%,#f4faf5 58%,#edf8ef 100%);box-shadow:0 10px 28px rgba(32,92,51,.08)}.deal-hero::after{content:"";position:absolute;right:-80px;top:-100px;width:270px;height:270px;border-radius:50%;background:radial-gradient(circle,rgba(102,187,135,.14),transparent 67%);pointer-events:none}.deal-hero-main{position:relative;z-index:1;min-width:0}.deal-eyebrow{display:flex;align-items:center;gap:8px;margin-bottom:9px;color:#64748b;font-size:12px;font-weight:650;letter-spacing:.06em}.deal-eyebrow i{width:7px;height:7px;border-radius:50%;background:#5c9e69;box-shadow:0 0 0 4px rgba(92,158,105,.12)}.deal-hero-name{font-size:23px;font-weight:750;letter-spacing:-.025em;word-break:break-word}.deal-meta{display:flex;gap:8px 16px;flex-wrap:wrap;margin-top:12px;color:var(--text-2);font-size:12.5px}.deal-meta span{display:inline-flex;align-items:center;gap:5px}.deal-meta b{color:var(--text);font-weight:600}.deal-progress{position:relative;z-index:1;display:flex;align-items:center;gap:0;flex-shrink:0;padding:5px 0}.deal-step{position:relative;display:grid;justify-items:center;gap:6px;min-width:74px;color:#9ca3af;font-size:11px;text-align:center}.deal-step:not(:last-child)::after{content:"";position:absolute;left:calc(50% + 15px);top:15px;width:calc(100% - 30px);height:1px;background:#dce2e9}.deal-step i{display:grid;place-items:center;width:30px;height:30px;border:1px solid #dce2e9;border-radius:50%;background:#fff;color:#9ca3af;font-style:normal;font-size:13px}.deal-step.done,.deal-step.active{color:#426f4e;font-weight:650}.deal-step.done i{border-color:#6dae7a;background:#eaf7ec;color:#347442}.deal-step.active i{border-color:var(--primary);background:var(--primary);color:#fff;box-shadow:0 4px 12px rgba(40,122,73,.24)}.deal-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}.deal-kpi{min-height:105px;padding:16px 17px;border:1px solid var(--border);border-radius:13px;background:#fff;box-shadow:var(--shadow)}.deal-kpi-label{display:flex;align-items:center;justify-content:space-between;color:var(--text-2);font-size:12px}.deal-kpi-label i{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:#eaf6ed;color:var(--primary);font-size:14px;font-style:normal}.deal-kpi:nth-child(2) .deal-kpi-label i{background:#eefaf5;color:#17875c}.deal-kpi:nth-child(3) .deal-kpi-label i{background:#fff7e9;color:#c98319}.deal-kpi:nth-child(4) .deal-kpi-label i{background:#f4f5f7;color:#667085}.deal-kpi-value{margin-top:9px;font-size:23px;font-weight:750;letter-spacing:-.025em}.deal-kpi-foot{margin-top:3px;color:var(--text-3);font-size:11.5px}.deal-detail-grid{grid-template-columns:minmax(300px,.78fr) minmax(680px,1.92fr)!important;align-items:start}.deal-detail-grid .card{border-radius:13px}.deal-detail-grid .card-title{padding-bottom:11px;border-bottom:1px solid #eef0f3}.deal-detail-grid .kvlist{grid-template-columns:88px 1fr;gap:10px 12px}.deal-detail-grid .kvlist .k{font-size:12px;color:#8a919e}.deal-detail-grid .kvlist .v{font-size:13px;line-height:1.55}.deal-detail-grid .table-wrap{margin:-2px -2px}.deal-detail-grid table.data{font-size:12.5px}.deal-detail-grid table.data th{background:#f6fbf7}.deal-detail-grid table.data td{padding-top:11px;padding-bottom:11px}.deal-empty{padding:38px 20px!important}.deal-empty .big{font-size:30px!important}.original-follow{border:0;background:transparent;color:#a7b0aa;font-size:22px;line-height:1;cursor:pointer;padding:2px 6px}.original-follow:hover,.original-follow.active{color:#e25555}.original-follow.active{transform:scale(1.05)}@media(max-width:1180px){.deal-hero{align-items:flex-start;flex-direction:column}.deal-progress{width:100%;justify-content:flex-start}.deal-kpis{grid-template-columns:repeat(2,1fr)}.deal-detail-grid{grid-template-columns:1fr!important}}@media(max-width:640px){.deal-page-head h2{font-size:21px}.deal-hero{padding:19px}.deal-hero-name{font-size:20px}.deal-progress{overflow-x:auto;padding-bottom:3px}.deal-step{min-width:68px}.deal-kpis{grid-template-columns:1fr 1fr;gap:9px}.deal-kpi{min-height:96px;padding:13px}.deal-kpi-value{font-size:20px}.deal-detail-grid .kvlist{grid-template-columns:78px 1fr}}
 </style>
 <div class="page-head">
   <div class="deal-page-head">
-    <a class="deal-back" href="/scrm/deals">← 返回商单列表</a>
+    {% if is_scrm_admin or 'deals' in allowed_pages %}<a class="deal-back" href="/scrm/deals">← 返回商单列表</a>{% endif %}
     <h2>商单详情</h2>
     <div class="sub" id="subTitle">正在加载商单信息…</div>
   </div>
   <div class="actions">
-    <button class="btn" id="addAccountDealBtn">➕ 新增账户商单</button>
-    <button class="btn primary" id="addVideoBtn">➕ 添加展示视频</button>
-    <button class="btn danger" id="deleteDealBtn">删除商单</button>
+    {% if is_scrm_admin or 'deals.edit' in allowed_actions %}<button class="btn" id="addAccountDealBtn">➕ 新增账户商单</button>{% endif %}
+    {% if is_scrm_admin or 'deals.video' in allowed_actions %}<button class="btn primary" id="addVideoBtn">➕ 添加展示视频</button>{% endif %}
+    {% if is_scrm_admin or 'deals.delete' in allowed_actions %}<button class="btn danger" id="deleteDealBtn">删除商单</button>{% endif %}
   </div>
 </div>
 
@@ -24,10 +24,23 @@
 {% block scripts %}
 <script>
 const DID = {{ did | tojson }};
+const CAN_DEALS_PAGE = {{ (is_scrm_admin or 'deals' in allowed_pages)|tojson }};
+const CAN_INQUIRIES = {{ (is_scrm_admin or 'inquiries' in allowed_pages)|tojson }};
+// 商单详情内的博主原创仅作关联内容展示，不等同于全局“视频列表”页面权限。
+const CAN_ORIGINAL_VIDEOS = true;
+const CAN_DEAL_VIDEOS = {{ (is_scrm_admin or 'deals.videos' in allowed_fields)|tojson }};
+// 商单详情内的评论列表属于商单详情数据；“评论详情”页面权限只控制每行跳转入口。
+const CAN_COMMENTS = true;
+const CAN_COMMENT_DETAIL = {{ (is_scrm_admin or 'comment_detail' in allowed_pages)|tojson }};
+const CAN_DEALS_EDIT = {{ (is_scrm_admin or 'deals.edit' in allowed_actions)|tojson }};
+const CAN_DEALS_VIDEO_EDIT = {{ (is_scrm_admin or 'deals.video' in allowed_actions)|tojson }};
+const CAN_DEALS_DELETE = {{ (is_scrm_admin or 'deals.delete' in allowed_actions)|tojson }};
 const STATUS_TEXT = { executing: "执行中", published: "已发布", won: "合作成功", kpi_done: "KPI已完成", ended: "已结束", canceled: "已取消" };
 const STATUS_COLOR = { executing: "primary", published: "teal", won: "green", kpi_done: "green", ended: "gray", canceled: "red" };
 let data = null;
+let dealCommentTab = "intent";
 let autoEditOpened = false;
+const originalFollowed = new Set(JSON.parse(localStorage.getItem("scrm_original_followed") || "[]"));
 function dateInputValue(ts) { if (!ts) return ""; const d = new Date(Number(ts) * 1000); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; }
 function dateOnly(ts) { if (!ts) return ""; const d = new Date(Number(ts) * 1000); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
 
@@ -117,6 +130,9 @@ function statusModal() {
       <div class="form-row"><label>产品</label><input id="dProduct" value="${S.esc(data.deal.product || "")}"></div>
       <div class="form-row"><label>型号</label><input id="dModel" value="${S.esc(data.deal.model || "")}" placeholder="请输入产品型号"></div>
       <div class="form-row"><label>媒介公司</label><input id="dMedia" value="${S.esc(data.deal.media_company || "")}"></div>
+      <div class="form-row"><label>执行群</label><input id="dExecutionGroup" value="${S.esc(data.deal.execution_group || "")}" placeholder="请输入执行群名称"></div>
+      <div class="form-row"><label>AE执行</label><input id="dAeExecutor" value="${S.esc(data.deal.ae_executor || "")}" placeholder="请输入AE执行人"></div>
+      <div class="form-row"><label>收款账户名称</label><select id="dPaymentAccountName"><option value="">${(data.payment_accounts || []).length ? "请选择收款账户" : "该媒介暂无收款账户"}</option>${(data.payment_accounts || []).map(a => `<option value="${S.esc(a.account_name || "")}" ${(data.deal.payment_account_name || "") === (a.account_name || "") ? "selected" : ""}>${S.esc(a.account_name || "—")}${a.subject_name ? `（${S.esc(a.subject_name)}）` : ""}</option>`).join("")}</select></div>
       <div class="form-row"><label>商务负责人</label><input id="dOwner" value="${S.esc(data.deal.owner || "")}"></div>
       <div class="form-row"><label>合作类型</label><input id="dCoop" value="${S.esc(data.deal.coop_types || "")}"></div>
       <div class="form-row"><label>平台账号</label><input id="dAccounts" value="${S.esc(data.deal.platform_accounts || "")}"></div>
@@ -133,6 +149,7 @@ function statusModal() {
         status: body.querySelector("#dStatus").value,
         name: body.querySelector("#dName").value.trim(), brand: body.querySelector("#dBrand").value.trim(),
         product: body.querySelector("#dProduct").value.trim(), model: body.querySelector("#dModel").value.trim(), media_company: body.querySelector("#dMedia").value.trim(),
+        execution_group: body.querySelector("#dExecutionGroup").value.trim(), ae_executor: body.querySelector("#dAeExecutor").value.trim(), payment_account_name: body.querySelector("#dPaymentAccountName").value.trim(),
         owner: body.querySelector("#dOwner").value.trim(), coop_types: body.querySelector("#dCoop").value.trim(),
         platform_accounts: body.querySelector("#dAccounts").value.trim(),
         note: body.querySelector("#dNote").value,
@@ -151,6 +168,7 @@ function statusModal() {
 
 function render() {
   const d = data.deal;
+  const selectedPaymentAccount = (data.payment_accounts || []).find(a => String(a.account_name || "") === String(d.payment_account_name || ""));
   const videos = data.videos || [];
   const publishedVideos = videos.filter(v => v.url).length;
   const completedVideos = videos.filter(v => v.video_status === "已达标").length;
@@ -161,7 +179,7 @@ function render() {
   S.$("subTitle").textContent = d.name || "-";
   document.title = `${d.name || "商单详情"} · 觅牛文化`;
   S.$("root").innerHTML = `
-    <section class="deal-hero">
+    <section class="deal-hero" data-guide="deal-status">
       <div class="deal-hero-main">
         <div class="deal-eyebrow"><i></i>DEAL OVERVIEW · ${S.esc(d.order_no || "未填写订单编号")}</div>
         <div class="deal-hero-name">${S.esc(d.name || "未命名商单")}</div>
@@ -170,17 +188,17 @@ function render() {
       <div class="deal-progress" aria-label="商单进度">${stageLabels.map((label, i) => `<div class="deal-step ${i < currentStage ? "done" : (i === currentStage ? "active" : "")}"><i>${i < currentStage ? "✓" : i + 1}</i><span>${label}</span></div>`).join("")}</div>
     </section>
     <section class="deal-kpis" aria-label="商单关键数据">
-      <div class="deal-kpi"><div class="deal-kpi-label">关联展示视频<i>◉</i></div><div class="deal-kpi-value">${videos.length}</div><div class="deal-kpi-foot">已发布 ${publishedVideos} 条</div></div>
-      <div class="deal-kpi"><div class="deal-kpi-label">KPI 达标进度<i>✓</i></div><div class="deal-kpi-value">${completedVideos}/${videos.length}</div><div class="deal-kpi-foot">${videos.length ? Math.round(completedVideos / videos.length * 100) : 0}% 视频已达标</div></div>
+      <div class="deal-kpi" data-guide="video-count"><div class="deal-kpi-label">关联展示视频<i>◉</i></div><div class="deal-kpi-value">${videos.length}</div><div class="deal-kpi-foot">已发布 ${publishedVideos} 条</div></div>
+      <div class="deal-kpi" data-guide="kpi-progress"><div class="deal-kpi-label">KPI 达标进度<i>✓</i></div><div class="deal-kpi-value">${completedVideos}/${videos.length}</div><div class="deal-kpi-foot">${videos.length ? Math.round(completedVideos / videos.length * 100) : 0}% 视频已达标</div></div>
       <div class="deal-kpi"><div class="deal-kpi-label">商单金额<i>¥</i></div><div class="deal-kpi-value">${amount ? `¥${amount.toLocaleString("zh-CN", {maximumFractionDigits: 2})}` : "待填写"}</div><div class="deal-kpi-foot">${d.rebate != null && d.rebate !== "" ? `返点 ${S.esc(d.rebate)}` : "暂未设置返点"}</div></div>
-      <div class="deal-kpi"><div class="deal-kpi-label">预计发布<i>◷</i></div><div class="deal-kpi-value">${d.actual_publish_date || (d.display_expect_ts ? dateOnly(d.display_expect_ts) : (d.expect_ts ? dateOnly(d.expect_ts) : "待排期"))}</div><div class="deal-kpi-foot">${d.actual_publish_date ? "实际发布时间" : "计划 / 最近发布时间"}</div></div>
+      <div class="deal-kpi" data-guide="publish-schedule"><div class="deal-kpi-label">预计发布<i>◷</i></div><div class="deal-kpi-value">${d.actual_publish_date || (d.display_expect_ts ? dateOnly(d.display_expect_ts) : (d.expect_ts ? dateOnly(d.expect_ts) : "待排期"))}</div><div class="deal-kpi-foot">${d.actual_publish_date ? "实际发布时间" : "计划 / 最近发布时间"}</div></div>
     </section>
     <div class="grid cards-2 deal-detail-grid">
       <div>
-        ${renderOriginalVideos()}
-        <div class="card">
+        ${CAN_ORIGINAL_VIDEOS ? renderOriginalVideos() : ""}
+        <div class="card" data-guide="deal-information">
           <div class="card-title">商单信息
-            <span class="more">${S.badge(d.display_status || STATUS_TEXT[d.status] || d.status, d.data_completed ? "green" : (STATUS_COLOR[d.status] || "gray"), true)} <button class="btn sm" id="editDealBtn">编辑</button></span>
+            <span class="more">${S.badge(d.display_status || STATUS_TEXT[d.status] || d.status, d.data_completed ? "green" : (STATUS_COLOR[d.status] || "gray"), true)} ${CAN_DEALS_EDIT ? '<button class="btn sm" id="editDealBtn">编辑</button>' : ''}</span>
           </div>
           <div class="kvlist">
             <div class="k">商单名称</div><div class="v">${S.esc(d.name || "-")}</div>
@@ -192,6 +210,9 @@ function render() {
             <div class="k">商单状态</div><div class="v">${S.badge(d.display_status || STATUS_TEXT[d.status] || d.status, d.data_completed ? "green" : (STATUS_COLOR[d.status] || "gray"), true)}</div>
             <div class="k">完成时间</div><div class="v">${S.fmtTs(d.completed_ts)}</div>
             <div class="k">媒介公司</div><div class="v">${S.esc(d.media_company || "-")}</div>
+            <div class="k">执行群</div><div class="v">${S.esc(d.execution_group || "-")}</div>
+            <div class="k">AE执行</div><div class="v">${S.esc(d.ae_executor || "-")}</div>
+            <div class="k">收款账户</div><div class="v">${d.payment_account_name ? `${S.esc(d.payment_account_name)}${selectedPaymentAccount?.subject_name ? `（主体：${S.esc(selectedPaymentAccount.subject_name)}）` : ""}` : "-"}</div>
             <div class="k">商务负责人</div><div class="v">${S.esc(d.owner || "-")}</div>
             <div class="k">合作类型</div><div class="v">${S.esc(d.coop_types || "-")}</div>
             <div class="k">平台账号</div><div class="v">${S.esc(d.platform_accounts || "-")}</div>
@@ -201,7 +222,7 @@ function render() {
             <div class="k">创建时间</div><div class="v">${S.fmtTs(d.created_ts)}</div>
           </div>
         </div>
-        ${data.inquiry ? `
+        ${CAN_INQUIRIES && data.inquiry ? `
         <div class="card">
           <div class="card-title">来源询单
             <span class="more"><a class="btn sm ghost" href="/scrm/inquiries">查看询单 →</a></span>
@@ -219,26 +240,25 @@ function render() {
       <div>
         <div class="card">
           <div class="card-title">💡 产品卖点
-            <span class="more"><button class="btn sm" id="sellingPointToggle">展开</button> <button class="btn sm" id="sellingPointBtn">编辑并同步商品匹配</button></span>
+            <span class="more"><button class="btn sm" id="sellingPointToggle">展开</button> ${CAN_DEALS_EDIT ? '<button class="btn sm" id="sellingPointBtn">编辑并同步商品匹配</button>' : ''}</span>
           </div>
           <div id="sellingPointBody" style="display:none;">
             ${data.deal.category ? (data.selling_point_templates || []).length ? `<div class="table-wrap"><table class="data"><thead><tr><th style="min-width:150px">痛点</th><th style="width:95px">品类</th><th style="width:80px">星级</th><th style="min-width:260px">标准回复</th></tr></thead><tbody>${data.selling_point_templates.map(p => `<tr><td>${S.esc(p.pain_point)}</td><td>${S.esc(p.category)}</td><td title="${S.esc(p.star_rating || 3)} 星" style="color:#f59e0b;white-space:nowrap">${"★".repeat(Number(p.star_rating || 3))}${"☆".repeat(5-Number(p.star_rating || 3))}</td><td style="white-space:pre-wrap">${S.esc(p.reply_guidance || "—")}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><div class="big">💡</div>「${S.esc(data.deal.category)}」暂无痛点，请先在知识库中维护</div>` : `<div class="empty"><div class="big">🏷️</div>请先编辑商单并填写品类</div>`}
           </div>
         </div>
-        <div class="card">
+        ${CAN_DEAL_VIDEOS ? `<div class="card" data-guide="display-video-status">
           <div class="card-title">📺 展示视频(${data.videos.length})
-            <span class="more"><button class="btn sm" id="addVideoBtn2">➕ 添加</button></span>
+            <span class="more">${CAN_DEALS_VIDEO_EDIT ? '<button class="btn sm" id="addVideoBtn2">➕ 添加</button>' : ''}</span>
           </div>
           ${data.videos.length ? `<div class="table-wrap">
             <table class="data">
               <thead><tr>
-                <th style="width:64px;">平台</th><th style="width:150px;">账户</th><th style="width:90px;">金额</th><th style="width:110px;">KPI播放</th><th style="width:110px;">KPI互动</th><th style="min-width:180px;">视频标题</th><th style="width:130px;">发布时间</th><th style="width:82px;">视频状态</th><th style="width:110px;">操作</th>
+                <th style="width:64px;">平台</th><th style="width:150px;">账户</th><th style="width:90px;">金额</th><th style="width:110px;" data-guide="video-kpi-views">KPI播放</th><th style="width:110px;" data-guide="video-kpi-interactions">KPI互动</th><th style="min-width:180px;">视频标题</th><th style="width:130px;">发布时间</th><th style="width:82px;" data-guide="video-status">视频状态</th><th style="width:110px;">操作</th>
               </tr></thead>
               <tbody>${data.videos.map(v => `<tr>
                 <td>${v.platform ? S.platformTag(v.platform) : '<span class="muted">—</span>'}</td>
                 <td>
                   <div class="clamp">👤 ${S.esc(v.account || "-")}</div>
-                  <div class="sub2">${S.badge(v.category || "原创", v.category === "商单" ? "amber" : "gray")}</div>
                 </td>
                 <td class="mono">${v.amount == null ? "—" : S.esc(v.amount)}</td>
                 <td class="mono" style="${v.play_reached ? "color:#16a34a;font-weight:600;" : ""}">${v.kpi_views == null ? "—" : S.esc(v.kpi_views)}<div class="sub2" style="${v.play_reached ? "color:#16a34a;" : ""}">实际 ${v.actual_views == null ? "—" : S.esc(v.actual_views)}</div></td>
@@ -246,22 +266,24 @@ function render() {
                 <td>${v.url ? `<a href="${S.esc(v.url)}" target="_blank" class="clamp">${S.esc(v.title || "打开视频")}</a>` : `<span class="muted">${S.esc(v.title || "待补充标题")}</span>`}</td>
                 <td class="nowrap muted">${S.fmtTs(v.publish_ts)}</td>
                 <td>${S.badge(v.video_status || "未达标", v.video_status === "已达标" ? "green" : "gray", true)}</td>
-                <td><button class="btn sm" data-edit-vid="${v.id ?? v.video_id ?? ''}">编辑</button> <button class="btn sm danger" data-vid="${v.id ?? v.video_id ?? ''}">删除</button></td>
+                <td>${CAN_DEALS_VIDEO_EDIT ? `<button class="btn sm" data-edit-vid="${v.id ?? v.video_id ?? ''}">编辑</button> <button class="btn sm danger" data-vid="${v.id ?? v.video_id ?? ''}">删除</button>` : "—"}</td>
               </tr>`).join("")}</tbody>
             </table>
           </div>` : `<div class="empty deal-empty"><div class="big">📺</div>暂无展示视频，点击「添加展示视频」补充平台账户对应的视频链接</div>`}
-        </div>
-        ${renderDealComments()}
+        </div>` : ""}
+        ${CAN_COMMENTS ? renderDealComments() : ""}
       </div>
     </div>`;
-  S.$("editDealBtn").onclick = statusModal;
-  S.$("deleteDealBtn").onclick = () => S.confirm("确认删除该商单及其展示视频吗？删除后无法恢复。", async () => {
+  const editDealButton = S.$("editDealBtn"), deleteDealButton = S.$("deleteDealBtn");
+  if (editDealButton) editDealButton.onclick = statusModal;
+  if (deleteDealButton) deleteDealButton.onclick = () => S.confirm("确认删除该商单及其展示视频吗？删除后无法恢复。", async () => {
     await S.api(`/deals/${DID}/delete`, { method: "POST" });
     S.toast("商单已删除", "ok");
     location.href = "/scrm/deals";
   });
-  S.$("addVideoBtn2").onclick = videoModal;
-  S.$("sellingPointBtn").onclick = sellingPointTemplateModal;
+  const addVideoButton2 = S.$("addVideoBtn2"), sellingPointButton = S.$("sellingPointBtn");
+  if (addVideoButton2) addVideoButton2.onclick = videoModal;
+  if (sellingPointButton) sellingPointButton.onclick = sellingPointTemplateModal;
   const sellingPointToggle = S.$("sellingPointToggle");
   const sellingPointBody = S.$("sellingPointBody");
   sellingPointToggle.onclick = () => {
@@ -269,7 +291,19 @@ function render() {
     sellingPointBody.style.display = expanded ? "" : "none";
     sellingPointToggle.textContent = expanded ? "收起" : "展开";
   };
-  renderDealCommentTable("intent");
+  S.$$('[data-original-follow]').forEach(btn => btn.onclick = () => {
+    const row = data.historical_original_videos[Number(btn.dataset.originalFollow)];
+    if (!row) return;
+    const key = originalFollowKey(row);
+    if (originalFollowed.has(key)) originalFollowed.delete(key); else originalFollowed.add(key);
+    localStorage.setItem("scrm_original_followed", JSON.stringify([...originalFollowed]));
+    const active = originalFollowed.has(key);
+    btn.classList.toggle("active", active);
+    btn.textContent = active ? "♥" : "♡";
+    btn.title = active ? "已关注" : "关注";
+  });
+  // 评论区可能因角色权限完全不渲染，不能再向缺失的容器写入内容。
+  if (S.$("dealCommentTable")) renderDealCommentTable("intent");
   S.$$('[data-deal-comment-tab]').forEach(btn => btn.onclick = () => {
     S.$$('[data-deal-comment-tab]').forEach(item => item.classList.toggle("active", item === btn));
     renderDealCommentTable(btn.dataset.dealCommentTab);
@@ -287,23 +321,32 @@ function render() {
 
 function renderOriginalVideos() {
   const rows = data.historical_original_videos || [];
-  return `<div class="card"><div class="card-title">🚀 博主原创 (${rows.length})</div>${rows.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>平台</th><th>作者</th><th>产品</th><th>视频标题</th><th>播放</th><th>发布时间</th></tr></thead><tbody>${rows.map(v => `<tr><td>${S.platformTag(v.platform || "—")}</td><td class="clamp">${S.esc(v.upname || "—")}</td><td class="clamp">${S.esc(v.product_name || "—")}</td><td>${v.url ? `<a href="${S.esc(v.url)}" target="_blank" class="clamp">${S.esc(v.title || "打开视频")}</a>` : S.esc(v.title || "—")}</td><td class="mono">${S.esc(v.view_count || "—")}</td><td class="nowrap muted">${S.fmtTs(v.publish_time)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty"><div class="big">🚀</div>请关注更多博主,期待与您的再次合作</div>`}</div>`;
+  return `<div class="card" data-guide="original-video-showcase"><div class="card-title">🚀 博主原创 (${rows.length})</div>${rows.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>平台</th><th>博主</th><th>品牌</th><th>视频</th><th style="width:70px">关注</th></tr></thead><tbody>${rows.map((v, i) => { const followed = originalFollowed.has(originalFollowKey(v)); return `<tr><td>${S.platformTag(v.platform || "—")}</td><td><div class="clamp">${S.esc(v.upname || "—")}</div><div style="color:#f59e0b;white-space:nowrap;font-size:12px;line-height:1.2" title="默认推荐指数 5 星">★★★★★</div></td><td class="clamp">${S.esc(v.product_name || "—")}</td><td>${v.url ? `<a href="${S.esc(v.url)}" target="_blank" class="btn sm ghost">查看</a>` : `<span class="muted">暂无链接</span>`}</td><td><button type="button" class="original-follow${followed ? " active" : ""}" data-original-follow="${i}" title="${followed ? "已关注" : "关注"}">${followed ? "♥" : "♡"}</button></td></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty"><div class="big">🚀</div>请关注更多博主,期待与您的再次合作</div>`}</div>`;
+}
+
+function originalFollowKey(v) {
+  return String(v.url || `${v.platform || ""}:${v.content_id || v.title || v.upname || ""}`);
 }
 
 function renderDealComments() {
   const all = data.comment_samples || [];
-  return `<div class="card"><div class="card-title">💬 视频评论 <span class="sub2">${all.length} 条，支持 12 层回复关系</span></div><div class="tabs" style="padding:0 18px;margin-bottom:0"><button data-deal-comment-tab="intent" class="active">购买意向 <span class="n">${all.filter(c => c.intent).length}</span></button><button data-deal-comment-tab="negative">负面 <span class="n">${all.filter(c => c.neg).length}</span></button><button data-deal-comment-tab="other">其他 <span class="n">${all.filter(c => !c.intent && !c.neg).length}</span></button></div><div id="dealCommentTable"></div></div>`;
+  return `<div class="card" data-guide="comment-overview"><div class="card-title">💬 视频评论 (${all.length})</div><div class="tabs" style="padding:0 18px;margin-bottom:0"><button data-deal-comment-tab="intent" class="active" data-guide="comment-intent">购买意向 <span class="n">${all.filter(c => c.intent).length}</span></button><button data-deal-comment-tab="negative" data-guide="comment-negative">负面 <span class="n">${all.filter(c => c.neg).length}</span></button><button data-deal-comment-tab="other">其他 <span class="n">${all.filter(c => !c.intent && !c.neg).length}</span></button></div><div id="dealCommentTable"></div></div>`;
 }
 
 function renderDealCommentTable(tab = "intent") {
+  const container = S.$("dealCommentTable");
+  if (!container) return;
   const all = data.comment_samples || [];
-  const rows = tab === "intent" ? all.filter(c => c.intent) : tab === "negative" ? all.filter(c => c.neg) : all.filter(c => !c.intent && !c.neg);
+  dealCommentTab = tab;
+  const categoryRows = tab === "intent" ? all.filter(c => c.intent) : tab === "negative" ? all.filter(c => c.neg) : all.filter(c => !c.intent && !c.neg);
+  const rows = categoryRows;
   const label = {intent:"购买意向", negative:"负面", other:"其他"}[tab];
-  S.$("dealCommentTable").innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>平台</th><th>评论用户</th><th>评论内容</th><th>评论类型</th><th>购买意向</th><th>负面分类</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows.length ? rows.map(c => { const depth=Math.min(11,Math.max(0,Number(c.depth)||0)), indent=depth*20; return `<tr><td>${S.platformTag(c.platform || "—")}</td><td><div style="margin-left:${indent}px;padding-left:${depth?9:0}px;border-left:${depth?"2px solid var(--border)":"0"}">${depth?"↳ ":""}${S.esc(c.nickname || "匿名")}</div><div class="sub2" style="margin-left:${indent}px">${S.ago(c.ctime)}</div></td><td style="max-width:420px"><div class="clamp" style="margin-left:${indent}px;padding-left:${depth?9:0}px">${S.esc(c.content || "—")}</div></td><td>${c.comment_type ? S.badge(c.comment_type,c.neg?"red":"primary") : '<span class="muted">未分类</span>'}</td><td>${c.intent ? S.badge("有购买意向","amber",true) : S.badge("无明显意向","gray")}</td><td>${c.neg ? S.badge(c.comment_type ? `负面·${c.comment_type}` : "负面","red") : "—"}</td><td>${c.handled ? S.badge("已处理","green",true) : c.reviewed ? S.badge("已审核","primary",true) : c.analyzed ? S.badge("待处理","amber",true) : S.badge("待分析","gray",true)}</td><td><a class="btn sm ghost" href="/scrm/comments/${c.src_table}/${c.src_pk}">详情</a></td></tr>`; }).join("") : `<tr><td colspan="8"><div class="empty">暂无${label}评论</div></td></tr>`}</tbody></table></div>`;
+  container.innerHTML = `<div class="table-wrap"><table class="data"><thead><tr><th>平台</th><th>评论用户</th><th>评论内容</th><th>评论类型</th><th>购买意向</th><th>负面分类</th><th data-guide="comment-status">状态</th><th>操作</th></tr></thead><tbody>${rows.length ? rows.map(c => { const depth=Math.min(11,Math.max(0,Number(c.depth)||0)), indent=depth*20; return `<tr><td>${S.platformTag(c.platform || "—")}</td><td><div style="margin-left:${indent}px;padding-left:${depth?9:0}px;border-left:${depth?"2px solid var(--border)":"0"}">${depth?"↳ ":""}${S.esc(c.nickname || "匿名")}</div><div class="sub2" style="margin-left:${indent}px">${S.ago(c.ctime)}</div></td><td style="max-width:420px"><div class="clamp" style="margin-left:${indent}px;padding-left:${depth?9:0}px">${S.esc(c.content || "—")}</div></td><td>${c.comment_type ? S.badge(c.comment_type,c.neg?"red":"primary") : '<span class="muted">未分类</span>'}</td><td>${c.intent ? S.badge("有购买意向","amber",true) : S.badge("无明显意向","gray")}</td><td>${c.neg ? S.badge(c.comment_type ? `负面·${c.comment_type}` : "负面","red") : "—"}</td><td>${c.handled ? S.badge("已处理","green",true) : c.reviewed ? S.badge("已审核","primary",true) : c.analyzed ? S.badge("待处理","amber",true) : S.badge("待分析","gray",true)}</td><td>${CAN_COMMENT_DETAIL ? `<a class="btn sm ghost" href="/scrm/comments/${c.src_table}/${c.src_pk}">详情</a>` : "—"}</td></tr>`; }).join("") : `<tr><td colspan="8"><div class="empty">暂无${label}评论</div></td></tr>`}</tbody></table></div>`;
 }
 
-S.$("addVideoBtn").onclick = videoModal;
-S.$("addAccountDealBtn").onclick = addAccountDealsModal;
+const addVideoButton = S.$("addVideoBtn"), addAccountDealButton = S.$("addAccountDealBtn");
+if (addVideoButton) addVideoButton.onclick = videoModal;
+if (addAccountDealButton) addAccountDealButton.onclick = addAccountDealsModal;
 async function load() {
   try {
     data = await S.api(`/deals/${DID}`);

@@ -1,0 +1,62 @@
+{% extends "scrm/base.html" %}
+{% block title %}返点对账{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h2>💰 返点对账</h2><div class="sub">统一管理商单返点的核实、收款账户和打款进度</div></div>
+  <div class="actions"><button class="btn primary" id="addBtn">➕ 新增对账</button></div>
+</div>
+
+<div class="filter-bar">
+  <select id="fStatus"><option value="">全部状态</option><option value="unverified">未核实</option><option value="pending_payment">待打款</option><option value="paid">打款完成</option></select>
+  <input id="fQ" placeholder="订单号 / 商单名称 / 媒介 / 账户名称 / 账号">
+  <button class="btn primary" id="searchBtn">🔍 筛选</button><button class="btn" id="resetBtn">重置</button>
+</div>
+
+<div class="card" style="padding:0;"><div class="table-wrap"><table class="data"><thead><tr>
+  <th>订单号</th><th>商单名称</th><th>媒介</th><th>金额</th><th>返点</th><th>账户名称</th><th>账号</th><th>开户行</th><th>核实时间</th><th>打款时间</th><th>状态</th><th>备注</th><th>操作</th>
+</tr></thead><tbody id="tbody"><tr><td colspan="13"><span class="spin"></span> 加载中…</td></tr></tbody></table></div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let rows = [];
+const STATUS = {unverified: ["未核实", "gray"], pending_payment: ["待打款", "primary"], paid: ["打款完成", "green"]};
+const money = value => value === null || value === undefined || value === "" ? "—" : `¥${Number(value).toLocaleString("zh-CN", {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+
+function editModal(record) {
+  const isNew = !record; record = record || {status: "unverified"};
+  S.modal({title: isNew ? "新增返点对账" : `编辑返点对账 · ${record.deal_name}`, body: `
+    <div class="form-grid">
+      <div class="form-row"><label>订单号</label><input id="orderNo" value="${S.esc(record.order_no || "")}" placeholder="填写订单号"></div>
+      <div class="form-row"><label>商单名称 *</label><input id="dealName" value="${S.esc(record.deal_name || "")}" placeholder="填写商单名称"></div>
+      <div class="form-row"><label>媒介</label><input id="mediaName" value="${S.esc(record.media_name || "")}" placeholder="媒介公司或姓名"></div>
+      <div class="form-row"><label>金额</label><input id="amount" type="number" min="0" step="0.01" value="${record.amount ?? ""}" placeholder="0.00"></div>
+      <div class="form-row"><label>返点</label><input id="rebate" type="number" min="0" step="0.01" value="${record.rebate ?? ""}" placeholder="0.00"></div>
+      <div class="form-row"><label>账户名称</label><input id="accountName" value="${S.esc(record.account_name || "")}"></div>
+      <div class="form-row"><label>账号</label><input id="accountNo" value="${S.esc(record.account_no || "")}"></div>
+      <div class="form-row"><label>开户行</label><input id="bankName" value="${S.esc(record.bank_name || "")}"></div>
+      <div class="form-row"><label>状态</label><select id="status"><option value="unverified" ${record.status === "unverified" ? "selected" : ""}>未核实</option><option value="pending_payment" ${record.status === "pending_payment" ? "selected" : ""}>待打款</option><option value="paid" ${record.status === "paid" ? "selected" : ""}>打款完成</option></select></div>
+      <div class="form-row"><label>核实时间</label><input id="verifiedDate" type="date" value="${S.esc(record.verified_date || "")}"><div class="sub">切换为待打款或打款完成时自动填写今天</div></div>
+      <div class="form-row"><label>打款时间</label><input id="paidDate" type="date" value="${S.esc(record.paid_date || "")}"><div class="sub">切换为打款完成时自动填写今天</div></div>
+    </div>
+    <div class="form-row" style="margin-top:12px;"><label>备注</label><textarea id="note" placeholder="可填写对账说明、异常原因等">${S.esc(record.note || "")}</textarea></div>`, okText: "保存",
+    onOk: async body => {
+      const payload = {id: record.id, order_no: body.querySelector("#orderNo").value.trim(), deal_name: body.querySelector("#dealName").value.trim(), media_name: body.querySelector("#mediaName").value.trim(), amount: body.querySelector("#amount").value, rebate: body.querySelector("#rebate").value, account_name: body.querySelector("#accountName").value.trim(), account_no: body.querySelector("#accountNo").value.trim(), bank_name: body.querySelector("#bankName").value.trim(), status: body.querySelector("#status").value, verified_date: body.querySelector("#verifiedDate").value, paid_date: body.querySelector("#paidDate").value, note: body.querySelector("#note").value.trim()};
+      await S.api("/rebate-reconciliations/save", {method: "POST", body: payload}); S.toast(isNew ? "对账记录已新增" : "对账记录已保存", "ok"); load();
+    }});
+}
+
+async function load() {
+  S.$("tbody").innerHTML = '<tr><td colspan="13" class="loading"><span class="spin"></span> 加载中…</td></tr>';
+  try { const p = new URLSearchParams(); if (S.$("fStatus").value) p.set("status", S.$("fStatus").value); if (S.$("fQ").value.trim()) p.set("q", S.$("fQ").value.trim()); const data = await S.api("/rebate-reconciliations?" + p); rows = data.rows || []; render(); }
+  catch (e) { S.$("tbody").innerHTML = `<tr><td colspan="13" style="color:#dc2626;padding:20px;">加载失败：${S.esc(e.message)}</td></tr>`; }
+}
+function render() {
+  if (!rows.length) { S.$("tbody").innerHTML = '<tr><td colspan="13"><div class="empty"><div class="big">💰</div>暂无返点对账记录</div></td></tr>'; return; }
+  S.$("tbody").innerHTML = rows.map(r => { const st = STATUS[r.status] || [r.status, "gray"]; const dealLink = r.deal_id ? `<a class="btn sm primary" href="/scrm/deals/${Number(r.deal_id)}">查看商单</a>` : `<button class="btn sm" data-no-deal>查看商单</button>`; return `<tr><td class="mono">${S.esc(r.order_no || "—")}</td><td>${S.esc(r.deal_name)}</td><td>${S.esc(r.media_name || "—")}</td><td class="mono">${money(r.amount)}</td><td class="mono">${money(r.rebate)}</td><td>${S.esc(r.account_name || "—")}</td><td class="mono">${S.esc(r.account_no || "—")}</td><td>${S.esc(r.bank_name || "—")}</td><td class="nowrap">${S.esc(r.verified_date || "—")}</td><td class="nowrap">${S.esc(r.paid_date || "—")}</td><td>${S.badge(st[0], st[1], true)}</td><td><div class="clamp sub2">${S.esc(r.note || "—")}</div></td><td class="nowrap">${dealLink} <button class="btn sm" data-edit="${r.id}">编辑</button></td></tr>`; }).join("");
+  S.$$('[data-edit]', S.$("tbody")).forEach(btn => btn.onclick = () => editModal(rows.find(r => Number(r.id) === Number(btn.dataset.edit))));
+  S.$$('[data-no-deal]', S.$("tbody")).forEach(btn => btn.onclick = () => S.toast("该手工对账记录尚未关联商单", "err"));
+}
+S.$("addBtn").onclick = () => editModal(); S.$("searchBtn").onclick = load; S.$("resetBtn").onclick = () => { S.$("fStatus").value = ""; S.$("fQ").value = ""; load(); }; S.$("fQ").onkeydown = e => { if (e.key === "Enter") load(); }; load();
+</script>
+{% endblock %}

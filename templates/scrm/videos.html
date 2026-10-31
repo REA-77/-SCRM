@@ -174,7 +174,8 @@ function render() {
       <td>${r.intent_count ? S.badge(r.intent_count, "amber", true) : '<span class="muted">0</span>'}</td>
       <td class="nowrap muted">${r.publish_time ? S.fmtTs(r.publish_time) : '<span class="muted">—</span>'}</td>
       <td><a class="btn sm" href="/scrm/comments?vid=${encodeURIComponent(r.content_id || "")}&platform=${encodeURIComponent(r.platform || "")}">💬 评论</a>
-        ${r.deal_id ? `<a class="btn sm primary" href="/scrm/deals/${encodeURIComponent(r.deal_id)}" title="${S.esc(r.deal_name || "查看商单")}">📑 商单</a>` : '<button class="btn sm" disabled title="该视频尚未关联商单">📑 商单</button>'}</td>
+        ${r.deal_id ? `<a class="btn sm primary" href="/scrm/deals/${encodeURIComponent(r.deal_id)}" title="${S.esc(r.deal_name || "查看商单")}">📑 商单</a>` : '<button class="btn sm" disabled title="该视频尚未关联商单">📑 商单</button>'}
+        ${VIDEO_MODE === "original" ? `<button class="btn sm danger" data-hide-original="${S.esc(r.src_table)}|${S.esc(r.content_id)}">隐藏</button>` : ""}</td>
     </tr>`;
   }).join("");
 }
@@ -183,6 +184,17 @@ S.$("searchBtn").onclick = () => { page = 1; load(); };
 S.$("fCategory").onchange = () => { page = 1; load(); };
 S.$("fPublishDays").onchange = () => { page = 1; load(); };
 S.$("fKpiStatus").onchange = () => { page = 1; load(); };
+S.$("tbody").addEventListener("click", async e => {
+  const button = e.target.closest("[data-hide-original]");
+  if (!button) return;
+  if (!confirm("确认隐藏该原创视频？隐藏后将不再出现在原创推荐和博主原创展示中。")) return;
+  const [srcTable, contentId] = button.dataset.hideOriginal.split("|");
+  try {
+    await S.api("/videos/hide", {method: "POST", body: {src_table: srcTable, content_id: contentId, hidden: true}});
+    S.toast("视频已隐藏", "ok");
+    load();
+  } catch (err) { S.toast(`隐藏失败：${err.message}`, "err"); }
+});
 S.$("selectOriginalAll").onchange = e => S.$$(".product-select:not(:disabled)").forEach(box => box.checked = e.target.checked);
 S.$("reviewProductsBtn").onclick = async () => {
   const items = S.$$(".product-select:checked").map(box => ({ src_table: box.dataset.srcTable, content_id: box.dataset.contentId }));

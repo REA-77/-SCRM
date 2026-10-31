@@ -21,7 +21,7 @@ from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from functools import wraps
 from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
-from flask import Blueprint, jsonify, render_template, request, session, redirect, url_for, g
+from flask import Blueprint, current_app, jsonify, render_template, request, session, redirect, url_for, g
 
 import requests
 from pymysql.err import IntegrityError
@@ -81,10 +81,11 @@ PERMISSION_CATALOG = {
         ("creators", "UP主管理"), ("accounts", "平台运营账号"), ("account_management", "账号总览"),
         ("leads_overview", "线索总览"), ("leads", "线索列表"), ("lead_detail", "线索详情"),
         ("lead_workflow", "线索工作流"), ("lead_alerts", "线索异常告警"),
-        ("brands", "品牌聚合"), ("brand_detail", "品牌详情"), ("brand_funnel", "品牌转化漏斗"),
+        ("brands", "品牌聚合"), ("brand_detail", "品牌详情／我的媒介"), ("brand_funnel", "品牌转化漏斗"),
         ("inquiries", "商务询单"), ("deals", "商单管理"), ("deal_detail", "商单详情"),
+        ("rebate_reconciliations", "返点对账"),
         ("media", "合作媒介"), ("business_wechat", "商务微信"),
-        ("settings", "设置管理"), ("categories", "品类管理"), ("brand_management", "品牌管理"),
+        ("settings", "设置管理"), ("business_kpi", "商务KPI"), ("categories", "品类管理"), ("brand_management", "品牌管理"),
         ("permission-management", "权限管理"),
     ],
     "field": [
@@ -109,6 +110,9 @@ PERMISSION_CATALOG = {
         ("deals.amount", "商单 · 金额/返点/媒介金额"), ("deals.kpi", "商单 · KPI 目标"),
         ("deals.date", "商单 · 预计/实际发布时间"), ("deals.accounts", "商单 · 平台账号"),
         ("deals.videos", "商单 · 发布视频及金额"), ("deals.status", "商单 · 状态与备注"),
+        ("rebate_reconciliations.record", "返点对账 · 商单、媒介、金额与返点"),
+        ("rebate_reconciliations.account", "返点对账 · 收款账户及开户行"),
+        ("rebate_reconciliations.status", "返点对账 · 状态、核实与打款时间"),
         ("media.name", "媒介 · 公司名称"), ("media.contact", "媒介 · 联系人"),
         ("media.phone", "媒介 · 联系电话"), ("media.wechat", "媒介 · 微信"),
         ("media.party_a", "媒介 · 甲方主体"), ("media.owner", "媒介 · 负责人"),
@@ -131,7 +135,7 @@ PERMISSION_CATALOG = {
     "action": [
         ("comments.view", "评论 · 查看详情"), ("comments.analyze", "评论 · 发起分析"),
         ("comments.reply", "评论 · 编辑回复"), ("comments.review", "评论 · 审核/标注"),
-        ("comments.export", "评论 · 导出"), ("videos.view", "视频 · 查看"),
+        ("comments.export", "评论 · 导出"), ("videos.view", "视频 · 查看"), ("videos.edit", "视频 · 编辑隐藏状态"),
         ("videos.review_product", "视频 · 审核产品名称"), ("videos.identify_product", "视频 · 自动识别产品"),
         ("alerts.handle", "告警 · 处理"), ("workbench.calibrate", "分析 · 人工校准"),
         ("leads.create", "线索 · 新增"), ("leads.edit", "线索 · 编辑"), ("leads.follow", "线索 · 添加跟进"),
@@ -141,6 +145,7 @@ PERMISSION_CATALOG = {
         ("inquiries.send_wechat", "询单 · 发送微信"), ("deals.create", "商单 · 新增/拆分"),
         ("deals.edit", "商单 · 编辑"), ("deals.delete", "商单 · 删除"),
         ("deals.video", "商单 · 管理发布视频"), ("deals.sync_product", "商单 · 同步产品参数"),
+        ("rebate_reconciliations.create", "返点对账 · 新增"), ("rebate_reconciliations.edit", "返点对账 · 编辑"),
         ("media.create", "媒介 · 新增"), ("media.edit", "媒介 · 编辑"), ("media.delete", "媒介 · 删除"),
         ("creators.sync", "UP主 · 同步"), ("creators.create", "UP主 · 新增"),
         ("creators.edit", "UP主 · 编辑"), ("creators.bind_skill", "UP主 · 绑定 Skill"),
@@ -152,11 +157,179 @@ PERMISSION_CATALOG = {
         ("kb.import", "知识库 · 导入资料"), ("kb.manage", "知识库 · 编辑/删除资料"),
         ("auto_tasks.retry", "自动任务 · 重试执行"),
         ("settings.edit_category", "设置 · 编辑品类"), ("settings.sync_category", "设置 · 同步品类"),
-        ("settings.edit_brand", "设置 · 编辑品牌"), ("settings.edit_kpi", "设置 · 编辑 KPI"),
+        ("settings.edit_brand", "设置 · 编辑品牌"), ("settings.edit_kpi", "设置 · 编辑 KPI"), ("settings.edit_payment", "设置 · 编辑收款账户"),
         ("users.manage", "系统账户 · 新增/编辑/启停"), ("roles.manage", "角色 · 新增/编辑"),
         ("roles.configure", "角色 · 配置权限"),
     ],
 }
+
+# 请求端点到权限目录的映射。页面权限保护读取入口，操作权限保护写入口；
+# 未登记的 SCRM API 默认拒绝，避免新接口在忘记配置时意外暴露。
+PAGE_ENDPOINT_PERMISSIONS = {
+    "page_overview": "overview", "page_comments": "comments", "page_videos": "videos",
+    "page_original_videos": "videos", "page_deal_videos": "videos",
+    "page_account_management": "account_management", "page_comment_detail": "comment_detail",
+    "page_alerts": "alerts", "page_workbench": "workbench", "page_reply": "reply",
+    "page_skills": "skills", "page_creators": "creators", "page_leads_overview": "leads_overview",
+    "page_leads": "leads", "page_lead_detail": "lead_detail", "page_lead_workflow": "lead_workflow",
+    "page_lead_alerts": "lead_alerts", "page_brands": "brands", "page_brand_management": "brand_management",
+    "page_brand_detail": "brand_detail", "page_brand_funnel": "brand_funnel", "page_inquiries": "inquiries",
+    "page_business_wechat": "business_wechat", "page_business_kpi": "settings", "page_categories": "categories", "page_settings": "settings",
+    "page_deals": "deals", "page_deal_detail": "deal_detail", "page_rebate_reconciliations": "rebate_reconciliations", "page_media": "media",
+    "page_accounts": "accounts", "page_permission_management": "permission-management",
+}
+
+API_PAGE_PERMISSIONS = {
+    "api_permission_catalog": "permission-management", "api_roles": "permission-management",
+    "api_role_permissions": "permission-management", "api_system_users": "permission-management",
+    "api_system_user_initial_password": "permission-management", "api_overview": "overview",
+    "api_comment_thread": "comments", "api_comments": "comments", "api_comment_detail": "comment_detail",
+    "api_videos": "videos", "api_alerts": "alerts", "api_workbench": "workbench",
+    "api_workbench_calibrations": "workbench", "api_leads_overview": "leads_overview",
+    "api_leads": "leads", "api_lead_locate": "leads", "api_lead_detail": "lead_detail",
+    "api_lead_alerts": "lead_alerts", "api_brands": "brands", "api_brand_detail": "brand_detail",
+    "api_brand_funnel": "brand_funnel", "api_inquiries": "inquiries", "api_business_wechat": "business_wechat",
+    "api_categories": "categories", "api_brand_management": "brand_management", "api_kpi_configs": "settings", "api_business_kpi": "settings", "api_payment_accounts": "settings",
+    "api_deals": "deals", "api_deal_detail": "deal_detail", "api_deal_selling_point_templates": "deal_detail",
+    "api_rebate_reconciliations": "rebate_reconciliations",
+    "api_media": "media", "api_creators": "creators", "api_skills": "skills", "api_accounts": "accounts",
+}
+
+API_ACTION_PERMISSIONS = {
+    "api_roles_save": "roles.manage", "api_role_permissions_save": "roles.configure",
+    "api_system_users_save": "users.manage", "api_system_users_status": "users.manage",
+    "api_comment_analyze": "comments.analyze", "api_video_product_review": "videos.review_product",
+    "api_video_product_name_update": "videos.review_product", "api_identify_original_products": "videos.identify_product",
+    "api_lead_update": "leads.edit", "api_lead_follow": "leads.follow",
+    "api_brand_update": "brands.edit", "api_brand_follow": "brands.follow",
+    "api_inquiry_create": "inquiries.create", "api_inquiries_send_wechat": "inquiries.send_wechat",
+    "api_business_wechat_save": "settings.edit_wechat", "api_business_wechat_delete": "settings.edit_wechat", "api_brand_management_save": "settings.edit_brand",
+    "api_brand_management_delete": "settings.edit_brand", "api_categories_save": "settings.edit_category",
+    "api_categories_sync_feishu": "settings.sync_category", "api_kpi_config_save": "settings.edit_kpi", "api_payment_account_save": "settings.edit_payment", "api_payment_account_delete": "settings.edit_payment",
+    "api_inquiries_sync": "inquiries.sync", "api_inquiry_status": "inquiries.edit",
+    "api_inquiry_delete": "inquiries.delete", "api_inquiries_batch_delete": "inquiries.delete",
+    "api_inquiry_update": "inquiries.edit", "api_deal_save_selling_point_templates": "deals.edit",
+    "api_deal_product_params_preview": "deals.sync_product", "api_deal_product_params_script_preview": "deals.sync_product",
+    "api_deal_feishu_doc_preview": "deals.sync_product", "api_deal_sync_product_params": "deals.sync_product",
+    "api_deal_accounts": "deals.edit", "api_deal_update": "deals.edit", "api_deal_delete": "deals.delete",
+    "api_deal_video_hide": "deals.video",
+    "api_video_hide": "videos.edit",
+    "api_deal_video_add": "deals.video", "api_deal_video_update": "deals.video", "api_deal_video_delete": "deals.video",
+    "api_rebate_reconciliation_save": "rebate_reconciliations.edit",
+    "api_creators_sync": "creators.sync", "api_creator_save": "creators.edit", "api_creator_bind": "creators.bind_skill",
+    "api_skill_save": "skills.edit", "api_skill_publish": "skills.publish", "api_skill_test": "skills.test",
+    "api_skill_delete": "skills.delete", "api_account_check_cookie": "accounts.check_cookie",
+    "api_account_update_cookie": "accounts.update_cookie", "api_account_save": "accounts.edit",
+    "api_account_delete": "accounts.delete",
+}
+
+PAGE_LANDING_URLS = {
+    "overview": "/scrm/", "comments": "/scrm/comments", "videos": "/scrm/videos",
+    "alerts": "/scrm/alerts", "workbench": "/scrm/analysis", "auto_tasks": "/scrm/auto-tasks",
+    "skills": "/scrm/skills", "kb": "/scrm/kb", "creators": "/scrm/creators",
+    "accounts": "/scrm/accounts", "account_management": "/scrm/account-management",
+    "leads_overview": "/scrm/leads/overview", "leads": "/scrm/leads", "brands": "/scrm/brands",
+    "brand_funnel": "/scrm/brands/funnel", "inquiries": "/scrm/inquiries", "deals": "/scrm/deals",
+    "rebate_reconciliations": "/scrm/rebate-reconciliations", "media": "/scrm/media", "business_wechat": "/scrm/business-wechat", "settings": "/scrm/settings", "business_kpi": "/scrm/business-kpi",
+    "categories": "/scrm/categories", "brand_management": "/scrm/brand-management",
+    "permission-management": "/scrm/permission-management",
+}
+
+
+def _page_landing_url(page_key):
+    """详情权限对媒介账户自动落到自己的记录，不在角色中固化任意媒介 ID。"""
+    if page_key == "brand_detail":
+        media_id = (getattr(g, "scrm_user", None) or {}).get("media_id")
+        if media_id:
+            return f"/scrm/brands/{int(media_id)}"
+    return PAGE_LANDING_URLS.get(page_key)
+
+
+def _permission_denied():
+    """API 明确拒绝；页面静默跳转到当前账户的首个可访问入口。"""
+    if request.path.startswith("/scrm/api/"):
+        return jsonify({"error": "无权访问此功能", "permission_denied": True}), 403
+    for page_key, _ in PERMISSION_CATALOG["page"]:
+        landing_url = _page_landing_url(page_key)
+        if landing_url and _has_permission("page", page_key):
+            return redirect(landing_url)
+    # 没有任何可落地页面的账户不能继续留在受限区域。
+    session.clear()
+    return redirect(url_for("scrm.page_login"))
+
+
+def _has_permission(permission_type, permission_key):
+    return bool(getattr(g, "scrm_is_admin", False) or
+                (permission_type, permission_key) in getattr(g, "scrm_permissions", frozenset()))
+
+
+def _current_media_scope(cur):
+    """返回当前账户绑定的媒介记录；None 表示内部/管理员账户，False 表示失效媒介账户。"""
+    if getattr(g, "scrm_is_admin", False):
+        return None
+    media_id = getattr(g, "scrm_user", {}).get("media_id")
+    if media_id:
+        cur.execute("SELECT id,name FROM scrm_media WHERE id=%s", (media_id,))
+        return cur.fetchone() or False
+    # 历史通用“媒介”账户没有绑定公司，不能作为查看全部业务数据的后门。
+    if "媒介" in getattr(g, "scrm_role_names", frozenset()):
+        return False
+    return None
+
+
+def _media_scope_allows(scope, media_id=None, media_company=None):
+    """None 为不受限内部账户；False 为拒绝；绑定账户只允许自己的媒介 ID/公司。"""
+    if scope is None:
+        return True
+    if not scope:
+        return False
+    return (media_id is not None and int(media_id) == int(scope["id"])) or (
+        media_company is not None and str(media_company) == str(scope["name"]))
+
+
+def _request_permission():
+    """按当前蓝图端点解析需要的权限；返回 (类型, 键) 或 None。"""
+    endpoint = (request.endpoint or "").rsplit(".", 1)[-1]
+    if endpoint == "api_auth_permissions":
+        return None
+    # 附属蓝图也挂在 /scrm 下，统一复用本权限守卫。
+    if request.path.startswith("/scrm/api/kb/ingest"):
+        return ("page", "kb_ingest") if request.method == "GET" else ("action", "kb.import")
+    if request.path.startswith("/scrm/api/kb"):
+        return ("page", "kb") if request.method == "GET" else ("action", "kb.manage")
+    if request.path.startswith("/scrm/kb/ingest"):
+        return "page", "kb_ingest"
+    if request.path.startswith("/scrm/kb/"):
+        return "page", "kb_table"
+    if request.path.startswith("/scrm/kb"):
+        return "page", "kb"
+    if request.path.startswith("/scrm/auto-tasks"):
+        return ("action", "auto_tasks.retry") if request.method != "GET" else ("page", "auto_tasks")
+    if request.path.startswith("/scrm/reply-") or request.path.startswith("/scrm/risk-center"):
+        # 这些运营页尚未列入权限目录，仅系统管理员可以使用，避免普通账户绕过菜单直达。
+        return "action", "__unmapped__"
+    if endpoint in PAGE_ENDPOINT_PERMISSIONS:
+        return "page", PAGE_ENDPOINT_PERMISSIONS[endpoint]
+    if endpoint in API_PAGE_PERMISSIONS:
+        return "page", API_PAGE_PERMISSIONS[endpoint]
+    if endpoint == "api_media_save":
+        body = request.get_json(silent=True) or {}
+        return "action", "media.edit" if body.get("id") else "media.create"
+    if endpoint == "api_media_delete":
+        return "action", "media.delete"
+    if endpoint == "api_rebate_reconciliation_save":
+        body = request.get_json(silent=True) or {}
+        return "action", "rebate_reconciliations.edit" if body.get("id") else "rebate_reconciliations.create"
+    if endpoint in {"api_creator_save", "api_skill_save", "api_account_save"}:
+        body = request.get_json(silent=True) or {}
+        resource = {"api_creator_save": "creators", "api_skill_save": "skills", "api_account_save": "accounts"}[endpoint]
+        return "action", f"{resource}.edit" if body.get("id") else f"{resource}.create"
+    if endpoint in API_ACTION_PERMISSIONS:
+        return "action", API_ACTION_PERMISSIONS[endpoint]
+    # SCRM 内未显式登记的接口一律不允许普通账户访问。
+    if request.path.startswith("/scrm/api/"):
+        return "action", "__unmapped__"
+    return None
 
 
 def _normalize_password(password):
@@ -192,11 +365,11 @@ def _scrm_login_url():
         return ""
 
 
-def _queue_media_account_notification(cur, password, recipient_open_ids, now):
+def _queue_media_account_notification(cur, account, password, recipient_open_ids, now):
     """通知进入事务出站箱，只有提交成功后才会发送。"""
     payload = json.dumps({
         "login_url": _scrm_login_url(),
-        "account": "媒介",
+        "account": account,
         "password": password,
         "recipient_open_ids": recipient_open_ids or [],
     }, ensure_ascii=False)
@@ -265,8 +438,8 @@ def _dispatch_pending_media_notifications(limit=20):
                 conn.commit()
 
 
-def _ensure_media_system_user(cur, recipient_open_ids, now):
-    """为首个成功创建的商单补齐默认媒介账户；重复调用不会重置既有密码。"""
+def _ensure_media_system_user(cur, media_id, media_name, recipient_open_ids, now, notify=True):
+    """为每家合作媒介创建独立账户；同一媒介重复合作不会重置密码。"""
     cur.execute("SELECT id FROM scrm_role WHERE name='媒介' LIMIT 1")
     role = cur.fetchone()
     if not role:
@@ -276,30 +449,40 @@ def _ensure_media_system_user(cur, recipient_open_ids, now):
     else:
         role_id = role["id"]
 
-    cur.execute("SELECT id FROM scrm_user WHERE name='媒介' LIMIT 1")
+    cur.execute("SELECT id FROM scrm_user WHERE media_id=%s LIMIT 1", (media_id,))
     user = cur.fetchone()
     if user:
-        # 名称唯一，因此后续商单复用同一媒介账户；若曾被手动移除角色则自动补回。
+        # 同一媒介公司后续商单复用既有账户；若曾被手动移除角色则自动补回。
         cur.execute("""INSERT IGNORE INTO scrm_user_role (user_id,role_id,created_ts)
                        VALUES (%s,%s,%s)""", (user["id"], role_id, now))
         return user["id"], False
 
+    account = str(media_name or "媒介").strip()[:32] or "媒介"
+    cur.execute("SELECT id FROM scrm_user WHERE name=%s LIMIT 1", (account,))
+    if cur.fetchone():
+        # 系统账户名称全局唯一；以媒介 ID 追加后缀，保留公司名称的可识别性。
+        account = f"{account[:24]}-{media_id}"
     password = _media_initial_password()
     salt = os.urandom(16).hex()
     cur.execute("""INSERT INTO scrm_user
-                   (name,password_hash,password_salt,initial_password,initial_password_created_ts,created_ts,updated_ts)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                ("媒介", _password_digest(password, salt), salt, password, now, now, now))
+                   (name,media_id,password_hash,password_salt,initial_password,initial_password_created_ts,created_ts,updated_ts)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (account, media_id, _password_digest(password, salt), salt, password, now, now, now))
     user_id = cur.lastrowid
     cur.execute("INSERT INTO scrm_user_role (user_id,role_id,created_ts) VALUES (%s,%s,%s)",
                 (user_id, role_id, now))
-    _queue_media_account_notification(cur, password, recipient_open_ids, now)
+    if notify:
+        _queue_media_account_notification(cur, account, password, recipient_open_ids, now)
     return user_id, True
 
 
 @bp.before_request
 def require_scrm_login():
-    """保护 SCRM 全部页面与接口；登录、首次初始化接口除外。"""
+    """保护 SCRM 全部页面与接口，并在此处统一执行角色权限。"""
+    # 媒介门户独立进程已在宿主应用中完成账户校验、页面白名单和数据范围注入。
+    # 不重复加载内部角色权限，避免门户固定的最小权限被后台角色覆盖。
+    if current_app.config.get("MEDIA_PORTAL_MODE") and getattr(g, "media_portal_authenticated", False):
+        return None
     public_endpoints = {"scrm.page_login", "scrm.api_auth_login", "scrm.api_auth_setup"}
     if request.endpoint in public_endpoints:
         return None
@@ -307,15 +490,70 @@ def require_scrm_login():
     if user_id:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id,name,status FROM scrm_user WHERE id=%s", (user_id,))
+                cur.execute("SELECT id,name,media_id,status FROM scrm_user WHERE id=%s", (user_id,))
                 user = cur.fetchone()
+                if user and user["status"] == "active":
+                    cur.execute("""SELECT R.name,P.permission_type,P.permission_key
+                                   FROM scrm_user_role UR
+                                   JOIN scrm_role R ON R.id=UR.role_id AND R.status='active'
+                                   LEFT JOIN scrm_role_permission P ON P.role_id=R.id AND P.allowed=1
+                                   WHERE UR.user_id=%s""", (user_id,))
+                    grants = cur.fetchall()
         if user and user["status"] == "active":
             g.scrm_user = user
+            g.scrm_is_admin = any(row["name"] == "系统管理员" for row in grants)
+            g.scrm_role_names = frozenset(row["name"] for row in grants if row.get("name"))
+            g.scrm_permissions = frozenset(
+                (row["permission_type"], row["permission_key"])
+                for row in grants if row.get("permission_type") and row.get("permission_key")
+            )
+            required = _request_permission()
+            if required and not _has_permission(*required):
+                return _permission_denied()
             return None
     session.clear()
     if request.path.startswith("/scrm/api/"):
         return jsonify({"error": "登录已失效，请重新登录", "login_required": True}), 401
     return redirect(url_for("scrm.page_login", next=request.full_path))
+
+
+@bp.before_request
+def enforce_media_row_scope():
+    """媒介账户的详情/写入接口必须与绑定媒介归属一致，URL 改 ID 也不能越权。"""
+    if not getattr(g, "scrm_user", None) or getattr(g, "scrm_is_admin", False):
+        return None
+    endpoint = (request.endpoint or "").rsplit(".", 1)[-1]
+    args = request.view_args or {}
+    entity, entity_id = None, None
+    if endpoint in {"api_brand_detail", "api_brand_update", "api_brand_follow"}:
+        entity, entity_id = "media", args.get("bid")
+    elif endpoint.startswith("api_deal_") and args.get("did") is not None:
+        entity, entity_id = "deal", args.get("did")
+    elif endpoint in {"api_inquiry_status", "api_inquiry_delete", "api_inquiry_update"}:
+        entity, entity_id = "inquiry", args.get("iid")
+    elif endpoint == "api_media_delete":
+        entity, entity_id = "media", (request.get_json(silent=True) or {}).get("id")
+    elif endpoint == "api_media_save" and (request.get_json(silent=True) or {}).get("id"):
+        entity, entity_id = "media", (request.get_json(silent=True) or {}).get("id")
+    if entity_id in (None, ""):
+        return None
+    try:
+        entity_id = int(entity_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "资源不存在"}), 404
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if entity == "media":
+                allowed = _media_scope_allows(scope, media_id=entity_id)
+            else:
+                table = "scrm_deal" if entity == "deal" else "scrm_inquiry"
+                cur.execute(f"SELECT media_company FROM {table} WHERE id=%s", (entity_id,))
+                row = cur.fetchone()
+                allowed = bool(row) and _media_scope_allows(scope, media_company=row.get("media_company"))
+    if not allowed:
+        return jsonify({"error": "资源不存在"}), 404
+    return None
 
 
 def _calc_kpi(amount, cpme, cpe):
@@ -500,6 +738,7 @@ def _create_scrm_tables(cur):
         CREATE TABLE IF NOT EXISTS `scrm_user` (
           `id` BIGINT NOT NULL AUTO_INCREMENT,
           `name` VARCHAR(32) NOT NULL COMMENT '中文账户名称',
+          `media_id` BIGINT DEFAULT NULL COMMENT '关联合作媒介ID；自动媒介账户一媒介一账户',
           `password_hash` VARCHAR(128) NOT NULL,
           `password_salt` VARCHAR(64) NOT NULL,
           `initial_password` VARCHAR(32) DEFAULT NULL COMMENT '仅供账户管理页查看的当前初始密码',
@@ -507,7 +746,8 @@ def _create_scrm_tables(cur):
           `status` VARCHAR(16) NOT NULL DEFAULT 'active',
           `created_ts` BIGINT NOT NULL,
           `updated_ts` BIGINT NOT NULL,
-          PRIMARY KEY (`id`), UNIQUE KEY `uk_scrm_user_name` (`name`)
+          PRIMARY KEY (`id`), UNIQUE KEY `uk_scrm_user_name` (`name`),
+          UNIQUE KEY `uk_scrm_user_media_id` (`media_id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='SCRM系统账户'
     """)
     cur.execute("""
@@ -551,12 +791,18 @@ def _create_scrm_tables(cur):
     cur.execute("""INSERT IGNORE INTO scrm_role (name,description,status,built_in,created_ts,updated_ts)
                    VALUES ('媒介','商单自动创建账户的默认角色','active',1,%s,%s)""", (now, now))
     for col, ddl in (
+        ("media_id", "ALTER TABLE `scrm_user` ADD COLUMN `media_id` BIGINT DEFAULT NULL COMMENT '关联合作媒介ID；自动媒介账户一媒介一账户' AFTER `name`"),
         ("initial_password", "ALTER TABLE `scrm_user` ADD COLUMN `initial_password` VARCHAR(32) DEFAULT NULL COMMENT '仅供账户管理页查看的当前初始密码' AFTER `password_salt`"),
         ("initial_password_created_ts", "ALTER TABLE `scrm_user` ADD COLUMN `initial_password_created_ts` BIGINT DEFAULT NULL AFTER `initial_password`"),
     ):
         cur.execute("SELECT COUNT(*) c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='scrm_user' AND COLUMN_NAME=%s", (col,))
         if cur.fetchone()["c"] == 0:
             cur.execute(ddl)
+    cur.execute("""SELECT COUNT(*) c FROM information_schema.STATISTICS
+                   WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='scrm_user'
+                     AND INDEX_NAME='uk_scrm_user_media_id'""")
+    if cur.fetchone()["c"] == 0:
+        cur.execute("ALTER TABLE `scrm_user` ADD UNIQUE KEY `uk_scrm_user_media_id` (`media_id`)")
     # 内置管理员始终拥有权限目录中的所有项；新增加的页面/字段/操作会在启动时自动补齐。
     cur.execute("SELECT id FROM scrm_role WHERE name='系统管理员' LIMIT 1")
     admin_role = cur.fetchone()
@@ -724,6 +970,9 @@ def _create_scrm_tables(cur):
           `brand` VARCHAR(128) DEFAULT NULL,
           `product` VARCHAR(255) DEFAULT NULL,
           `media_company` VARCHAR(128) DEFAULT NULL,
+          `execution_group` VARCHAR(255) DEFAULT NULL COMMENT '执行群',
+          `ae_executor` VARCHAR(128) DEFAULT NULL COMMENT 'AE执行',
+          `payment_account_name` VARCHAR(128) DEFAULT NULL COMMENT '收款账户名称',
           `owner` VARCHAR(64) DEFAULT NULL COMMENT '商务负责人',
           `coop_types` VARCHAR(255) DEFAULT NULL,
           `platform_accounts` VARCHAR(500) DEFAULT NULL COMMENT '平台账号,逗号分隔',
@@ -776,6 +1025,19 @@ def _create_scrm_tables(cur):
     cur.execute("SELECT COUNT(*) c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='scrm_deal_video' AND COLUMN_NAME='auto_matched'")
     if cur.fetchone()["c"] == 0:
         cur.execute("ALTER TABLE `scrm_deal_video` ADD COLUMN `auto_matched` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '按账户日期自动匹配' AFTER `publish_ts`")
+    cur.execute("SELECT COUNT(*) c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='scrm_deal_video' AND COLUMN_NAME='is_hidden'")
+    if cur.fetchone()["c"] == 0:
+        cur.execute("ALTER TABLE `scrm_deal_video` ADD COLUMN `is_hidden` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否隐藏' AFTER `auto_matched`")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS `scrm_hidden_video` (
+          `id` BIGINT NOT NULL AUTO_INCREMENT,
+          `src_table` VARCHAR(64) NOT NULL,
+          `content_id` VARCHAR(128) NOT NULL,
+          `created_ts` BIGINT NOT NULL,
+          PRIMARY KEY (`id`),
+          UNIQUE KEY `uk_hidden_video` (`src_table`,`content_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='隐藏的视频内容'
+    """)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS `scrm_media` (
           `id` BIGINT NOT NULL AUTO_INCREMENT,
@@ -841,6 +1103,7 @@ def _create_scrm_tables(cur):
         ("feishu_mobile", "ALTER TABLE `scrm_business_wechat` ADD COLUMN `feishu_mobile` VARCHAR(32) DEFAULT NULL COMMENT '飞书手机号' AFTER `member`"),
         ("feishu_email", "ALTER TABLE `scrm_business_wechat` ADD COLUMN `feishu_email` VARCHAR(128) DEFAULT NULL COMMENT '飞书邮箱' AFTER `feishu_mobile`"),
         ("feishu_open_id", "ALTER TABLE `scrm_business_wechat` ADD COLUMN `feishu_open_id` VARCHAR(128) DEFAULT NULL COMMENT '飞书open_id缓存' AFTER `feishu_email`"),
+        ("monthly_target", "ALTER TABLE `scrm_business_wechat` ADD COLUMN `monthly_target` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT '每月目标KPI金额' AFTER `feishu_open_id`"),
     ):
         cur.execute("SELECT COUNT(*) c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='scrm_business_wechat' AND COLUMN_NAME=%s", (col,))
         if cur.fetchone()["c"] == 0:
@@ -886,10 +1149,57 @@ def _create_scrm_tables(cur):
         ("kpi_platform", "ALTER TABLE `scrm_deal` ADD COLUMN `kpi_platform` VARCHAR(32) DEFAULT NULL COMMENT 'KPI平台' AFTER `kpi_interactions`"),
         ("completed_ts", "ALTER TABLE `scrm_deal` ADD COLUMN `completed_ts` BIGINT DEFAULT NULL COMMENT '完成时间' AFTER `updated_ts`"),
         ("actual_publish_date", "ALTER TABLE `scrm_deal` ADD COLUMN `actual_publish_date` DATE DEFAULT NULL COMMENT '实际发布时间(精确到日)' AFTER `expect_ts`"),
+        ("execution_group", "ALTER TABLE `scrm_deal` ADD COLUMN `execution_group` VARCHAR(255) DEFAULT NULL COMMENT '执行群' AFTER `media_company`"),
+        ("ae_executor", "ALTER TABLE `scrm_deal` ADD COLUMN `ae_executor` VARCHAR(128) DEFAULT NULL COMMENT 'AE执行' AFTER `execution_group`"),
+        ("payment_account_name", "ALTER TABLE `scrm_deal` ADD COLUMN `payment_account_name` VARCHAR(128) DEFAULT NULL COMMENT '收款账户名称' AFTER `execution_group`"),
     ):
         cur.execute("SELECT COUNT(*) c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='scrm_deal' AND COLUMN_NAME=%s", (col,))
         if cur.fetchone()["c"] == 0:
             cur.execute(ddl)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS `scrm_payment_account` (
+          `id` BIGINT NOT NULL AUTO_INCREMENT,
+          `media_name` VARCHAR(128) NOT NULL COMMENT '媒介名称',
+          `subject_name` VARCHAR(255) DEFAULT NULL COMMENT '主体名称',
+          `account_name` VARCHAR(128) NOT NULL COMMENT '收款账户',
+          `bank_name` VARCHAR(128) DEFAULT NULL COMMENT '开户行',
+          `created_ts` BIGINT NOT NULL,
+          `updated_ts` BIGINT NOT NULL,
+          PRIMARY KEY (`id`),
+          KEY `idx_payment_media` (`media_name`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='媒介收款账户(一对多)'
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS `scrm_rebate_reconciliation` (
+          `id` BIGINT NOT NULL AUTO_INCREMENT,
+          `deal_id` BIGINT DEFAULT NULL COMMENT '关联商单ID',
+          `order_no` VARCHAR(64) DEFAULT NULL COMMENT '订单号',
+          `deal_name` VARCHAR(255) NOT NULL COMMENT '商单名称',
+          `media_name` VARCHAR(128) DEFAULT NULL COMMENT '媒介',
+          `amount` DECIMAL(12,2) DEFAULT NULL COMMENT '金额',
+          `rebate` DECIMAL(12,2) DEFAULT NULL COMMENT '返点',
+          `account_name` VARCHAR(128) DEFAULT NULL COMMENT '账户名称',
+          `account_no` VARCHAR(128) DEFAULT NULL COMMENT '账号',
+          `bank_name` VARCHAR(255) DEFAULT NULL COMMENT '开户行',
+          `note` VARCHAR(500) DEFAULT NULL COMMENT '备注',
+          `status` VARCHAR(16) NOT NULL DEFAULT 'unverified' COMMENT 'unverified未核实/pending_payment待打款/paid打款完成',
+          `verified_date` DATE DEFAULT NULL COMMENT '核实时间',
+          `paid_date` DATE DEFAULT NULL COMMENT '打款时间',
+          `created_ts` BIGINT NOT NULL,
+          `updated_ts` BIGINT NOT NULL,
+          PRIMARY KEY (`id`),
+          KEY `idx_rebate_reconciliation_deal` (`deal_id`),
+          KEY `idx_rebate_reconciliation_status` (`status`),
+          KEY `idx_rebate_reconciliation_media` (`media_name`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='返点对账'
+    """)
+    cur.execute("SELECT COUNT(*) c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='scrm_rebate_reconciliation' AND COLUMN_NAME='deal_id'")
+    if cur.fetchone()["c"] == 0:
+        cur.execute("ALTER TABLE `scrm_rebate_reconciliation` ADD COLUMN `deal_id` BIGINT DEFAULT NULL COMMENT '关联商单ID' AFTER `id`")
+        cur.execute("ALTER TABLE `scrm_rebate_reconciliation` ADD KEY `idx_rebate_reconciliation_deal` (`deal_id`)")
+    cur.execute("SELECT COUNT(*) c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='scrm_rebate_reconciliation' AND COLUMN_NAME='order_no'")
+    if cur.fetchone()["c"] == 0:
+        cur.execute("ALTER TABLE `scrm_rebate_reconciliation` ADD COLUMN `order_no` VARCHAR(64) DEFAULT NULL COMMENT '订单号' AFTER `deal_id`")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS `scrm_media_follow` (
           `id` BIGINT NOT NULL AUTO_INCREMENT,
@@ -1013,6 +1323,43 @@ def _provision_leads(cur):
                 (owner, status, status, int(time.time()), lid))
 
 
+def _sync_deal_rebate_reconciliation(cur, deal_id):
+    """按商单视频金额汇总，同步生成/更新对应的返点对账记录。"""
+    cur.execute("""
+        SELECT D.id,D.order_no,D.name,D.media_company,D.rebate,D.payment_account_name,
+               SUM(V.amount) AS video_amount
+        FROM scrm_deal D
+        LEFT JOIN scrm_deal_video V ON V.deal_id=D.id AND V.category='商单'
+        WHERE D.id=%s
+        GROUP BY D.id
+    """, (deal_id,))
+    deal = cur.fetchone()
+    if not deal or deal.get("rebate") in (None, "") or deal.get("video_amount") is None:
+        return False
+    account = None
+    if deal.get("media_company") and deal.get("payment_account_name"):
+        cur.execute("""SELECT subject_name,account_name,bank_name FROM scrm_payment_account
+                       WHERE media_name=%s AND account_name=%s ORDER BY id LIMIT 1""",
+                    (deal["media_company"], deal["payment_account_name"]))
+        account = cur.fetchone()
+    now = int(time.time())
+    cur.execute("SELECT id FROM scrm_rebate_reconciliation WHERE deal_id=%s ORDER BY id LIMIT 1", (deal_id,))
+    existing = cur.fetchone()
+    values = (deal.get("order_no"), deal["name"], deal.get("media_company"), deal["video_amount"], deal["rebate"],
+              (account or {}).get("subject_name"), (account or {}).get("account_name"),
+              (account or {}).get("bank_name"))
+    if existing:
+        cur.execute("""UPDATE scrm_rebate_reconciliation SET order_no=%s,deal_name=%s,media_name=%s,amount=%s,
+                       rebate=%s,account_name=%s,account_no=%s,bank_name=%s,updated_ts=%s WHERE id=%s""",
+                    values + (now, existing["id"]))
+    else:
+        cur.execute("""INSERT INTO scrm_rebate_reconciliation
+                       (deal_id,order_no,deal_name,media_name,amount,rebate,account_name,account_no,bank_name,status,created_ts,updated_ts)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'unverified',%s,%s)""",
+                    (deal_id,) + values + (now, now))
+    return True
+
+
 def init_scrm():
     """启动时幂等建表 + 种子 + 线索同步 + 飞书询单同步 + UP主同步"""
     try:
@@ -1022,9 +1369,11 @@ def init_scrm():
                 _seed(cur)
                 _provision_leads(cur)
                 _sync_creators(cur)
+                _backfill_won_deal_media_accounts(cur)
                 cur.execute("SELECT id FROM scrm_deal")
                 for deal in cur.fetchall():
                     _sync_deal_product_names(cur, deal["id"])
+                    _sync_deal_rebate_reconciliation(cur, deal["id"])
             conn.commit()
         logger.info("SCRM 表结构与种子数据已就绪")
     except Exception as e:
@@ -1248,6 +1597,40 @@ def _upsert_inquiries(cur, records):
     return new_n, upd_n
 
 
+def _ensure_deal_media_artifacts(cur, deal_id, company, brand, contact, wechat, owner,
+                                 recipient_open_ids=None, notify=True):
+    """为一笔成功商单沉淀合作媒介，并确保该媒介拥有独立系统账户。"""
+    company = str(company or "").strip()
+    if not company:
+        return None
+    now = int(time.time())
+    cur.execute("SELECT id, contact, wechat, owner, party_a FROM scrm_media WHERE name=%s", (company,))
+    media = cur.fetchone()
+    if not media:
+        cur.execute("""
+            INSERT INTO scrm_media (name, party_a, contact, wechat, source, src_deal_id,
+                                    status, owner, created_ts, updated_ts)
+            VALUES (%s,%s,%s,%s,'auto',%s,'cooperate',%s,%s,%s)
+        """, (company[:128], brand, contact, wechat, deal_id, owner, now, now))
+        media_id = cur.lastrowid
+    else:
+        media_id = media["id"]
+        sets, params = [], []
+        if not media.get("contact") and contact:
+            sets.append("contact=%s"); params.append(contact)
+        if not media.get("wechat") and wechat:
+            sets.append("wechat=%s"); params.append(wechat)
+        if not media.get("owner") and owner:
+            sets.append("owner=%s"); params.append(owner)
+        if not media.get("party_a") and brand:
+            sets.append("party_a=%s"); params.append(brand)
+        if sets:
+            sets.append("updated_ts=%s"); params.append(now); params.append(media_id)
+            cur.execute(f"UPDATE scrm_media SET {', '.join(sets)} WHERE id=%s", params)
+    _ensure_media_system_user(cur, media_id, company, recipient_open_ids or [], now, notify=notify)
+    return media_id
+
+
 def _ensure_won_artifacts(cur, inq):
     """询单合作成功 → 自动补建商单、合作媒介和默认媒介账户（均幂等）。"""
     now = int(time.time())
@@ -1268,10 +1651,6 @@ def _ensure_won_artifacts(cur, inq):
         cur.execute("SELECT id FROM scrm_deal WHERE inquiry_id=%s LIMIT 1", (inq["id"],))
         deal = cur.fetchone()
     deal_id = deal["id"] if deal else None
-    if deal_id:
-        # 商单创建与历史补数均在同一事务内补齐媒介账户；已有账户不会重置密码或重复通知。
-        recipient_open_ids = _resolve_sales_open_ids(cur, inq.get("sales"))
-        _ensure_media_system_user(cur, recipient_open_ids, now)
     if deal_id:
         cur.execute("UPDATE scrm_deal SET amount=COALESCE(%s,amount), rebate=COALESCE(%s,rebate), media_amount=COALESCE(%s,media_amount), updated_ts=%s WHERE id=%s",
                     (inq.get("amount"), inq.get("rebate"), inq.get("media_amount"), now, deal_id))
@@ -1301,31 +1680,12 @@ def _ensure_won_artifacts(cur, inq):
                              (deal_id, platform, account, title, category, url, creator, created_ts)
                              VALUES (%s,%s,%s,%s,'商单','',%s,%s)""",
                             (deal_id, platform, account, "询单平台账户", "系统", now))
-    # 2) 合作媒介(=品牌,按公司名幂等,联动时回填联系人/负责人)
-    company = (inq.get("media_company") or "").strip()
-    if company:
-        cur.execute("SELECT id, contact, owner, party_a FROM scrm_media WHERE name=%s", (company,))
-        media = cur.fetchone()
-        if not media:
-            cur.execute("""
-                INSERT INTO scrm_media (name, party_a, contact, wechat, source, src_deal_id,
-                                        status, owner, created_ts, updated_ts)
-                VALUES (%s,%s,%s,%s,'auto',%s,'cooperate',%s,%s,%s)
-            """, (company[:128], inq.get("brand"), inq.get("contact"), inq.get("wechat"), deal_id,
-                  inq.get("sales"), now, now))
-        else:
-            sets, params = [], []
-            if not media.get("contact") and inq.get("contact"):
-                sets.append("contact=%s"); params.append(inq.get("contact"))
-            if not media.get("wechat") and inq.get("wechat"):
-                sets.append("wechat=%s"); params.append(inq.get("wechat"))
-            if not media.get("owner") and inq.get("sales"):
-                sets.append("owner=%s"); params.append(inq.get("sales"))
-            if not media.get("party_a") and inq.get("brand"):
-                sets.append("party_a=%s"); params.append(inq.get("brand"))
-            if sets:
-                sets.append("updated_ts=%s"); params.append(now); params.append(media["id"])
-                cur.execute(f"UPDATE scrm_media SET {', '.join(sets)} WHERE id=%s", params)
+    # 2) 合作媒介与其独立账户（按公司名与媒介 ID 均幂等）。
+    if deal_id:
+        _ensure_deal_media_artifacts(
+            cur, deal_id, inq.get("media_company"), inq.get("brand"), inq.get("contact"),
+            inq.get("wechat"), inq.get("sales"), _resolve_sales_open_ids(cur, inq.get("sales"))
+        )
     return deal_id
 
 
@@ -1338,6 +1698,17 @@ def _run_won_flow(cur):
     for r in rows:
         _ensure_won_artifacts(cur, r)
     return len(rows)
+
+
+def _backfill_won_deal_media_accounts(cur):
+    """兼容历史上直接创建为合作成功的商单，补齐媒介与独立登录账户。"""
+    cur.execute("""SELECT id,media_company,brand,owner FROM scrm_deal
+                   WHERE status='won' AND media_company IS NOT NULL AND media_company<>''""")
+    for deal in cur.fetchall():
+        _ensure_deal_media_artifacts(
+            cur, deal["id"], deal.get("media_company"), deal.get("brand"), None, None,
+            deal.get("owner"), _resolve_sales_open_ids(cur, deal.get("owner")), notify=False
+        )
 
 
 def sync_feishu_inquiries():
@@ -1404,7 +1775,16 @@ def page_creators():
 # 页面路由
 # ============================================================
 def _page(tpl, active, **kw):
-    return render_template(f"scrm/{tpl}", active=active, current_user=getattr(g, "scrm_user", None), **kw)
+    # 商务KPI复用设置管理权限，避免为已有设置角色额外配置一份页面权限。
+    allowed_pages = [key for key, _ in PERMISSION_CATALOG["page"]
+                     if _has_permission("page", "settings" if key == "business_kpi" else key)]
+    allowed_fields = [key for key, _ in PERMISSION_CATALOG["field"] if _has_permission("field", key)]
+    allowed_actions = [key for key, _ in PERMISSION_CATALOG["action"] if _has_permission("action", key)]
+    return render_template(
+        f"scrm/{tpl}", active=active, current_user=getattr(g, "scrm_user", None),
+        allowed_pages=allowed_pages, allowed_fields=allowed_fields, allowed_actions=allowed_actions,
+        is_scrm_admin=getattr(g, "scrm_is_admin", False), **kw
+    )
 
 
 @bp.get("/login")
@@ -1468,6 +1848,17 @@ def api_auth_login():
 def auth_logout():
     session.clear()
     return redirect(url_for("scrm.page_login"))
+
+
+@bp.get("/api/auth/permissions")
+def api_auth_permissions():
+    """供动态页面按当前会话控制按钮/字段使用；不暴露任何其他角色数据。"""
+    return jsonify({
+        "pages": sorted(key for kind, key in g.scrm_permissions if kind == "page"),
+        "fields": sorted(key for kind, key in g.scrm_permissions if kind == "field"),
+        "actions": sorted(key for kind, key in g.scrm_permissions if kind == "action"),
+        "is_admin": bool(g.scrm_is_admin),
+    })
 
 
 @bp.get("/")
@@ -1589,7 +1980,12 @@ def page_categories():
 
 @bp.get("/settings")
 def page_settings():
-    return _page("settings.html", "settings")
+    return _page("settings.html", "payment_accounts" if request.args.get("tab") == "payment" else "settings")
+
+
+@bp.get("/business-kpi")
+def page_business_kpi():
+    return _page("business_kpi.html", "business_kpi")
 
 
 @bp.get("/deals")
@@ -1600,6 +1996,11 @@ def page_deals():
 @bp.get("/deals/<int:did>")
 def page_deal_detail(did):
     return _page("deal_detail.html", "deals", did=did)
+
+
+@bp.get("/rebate-reconciliations")
+def page_rebate_reconciliations():
+    return _page("rebate_reconciliations.html", "rebate_reconciliations")
 
 
 @bp.get("/media")
@@ -2027,12 +2428,13 @@ def api_videos():
         params.append(category)
     mode = (request.args.get("mode") or "").strip()
     if mode == "original":
-        clauses.extend(["V.category = '原创'", "COALESCE(V.product_reviewed, 0) = 1"])
+        clauses.extend(["V.category = '原创'", "COALESCE(V.product_reviewed, 0) = 1",
+                        "NOT EXISTS (SELECT 1 FROM scrm_hidden_video H WHERE H.src_table=V.src_table AND H.content_id=V.content_id)"])
     elif mode == "deal":
         clauses.extend([
             "V.category = '商单'",
             "EXISTS (SELECT 1 FROM scrm_deal_video DV JOIN scrm_deal D ON D.id=DV.deal_id "
-            "WHERE DV.url=V.url AND DV.category='商单' AND D.status NOT IN ('ended','canceled'))",
+            "WHERE DV.url=V.url AND DV.category='商单' AND COALESCE(DV.is_hidden,0)=0 AND D.status NOT IN ('ended','canceled'))",
         ])
     vid = (request.args.get("vid") or "").strip()
     if vid:
@@ -2069,10 +2471,10 @@ def api_videos():
             urls = [str(row.get("url") or "")[:500] for row in rows if row.get("url")]
             if urls:
                 placeholders = ",".join(["%s"] * len(urls))
-                cur.execute(f"""SELECT DV.url,D.brand,D.product,D.model
+                cur.execute(f"""SELECT DV.id AS deal_video_id,DV.url,DV.is_hidden,D.brand,D.product,D.model
                               ,D.id deal_id,D.name deal_name
                               FROM scrm_deal_video DV JOIN scrm_deal D ON D.id=DV.deal_id
-                              WHERE DV.url IN ({placeholders})
+                              WHERE DV.url IN ({placeholders}) AND COALESCE(DV.is_hidden,0)=0
                               ORDER BY D.updated_ts DESC""", urls)
                 matches = cur.fetchall()
                 commercial_names = {
@@ -2080,11 +2482,13 @@ def api_videos():
                     for row in matches if row.get("deal_id")
                 }
                 for row in matches:
-                    deal_links.setdefault(str(row.get("url") or ""), {"id": row.get("deal_id"), "name": row.get("deal_name")})
+                    deal_links.setdefault(str(row.get("url") or ""), {"id": row.get("deal_id"), "name": row.get("deal_name"), "deal_video_id": row.get("deal_video_id"), "is_hidden": row.get("is_hidden")})
     for r in rows:
         link = deal_links.get(str(r.get("url") or ""), {})
         r["deal_id"] = link.get("id")
         r["deal_name"] = link.get("name")
+        r["deal_video_id"] = link.get("deal_video_id")
+        r["deal_video_hidden"] = bool(link.get("is_hidden"))
         if r.get("category") == "商单":
             r["product_name"] = commercial_names.get(str(r.get("url") or "")) or r.get("product_name")
             r["product_reviewed"] = 1
@@ -2147,6 +2551,24 @@ def api_video_product_review():
                     f"AND product_name IS NOT NULL AND product_name<>''", (content_id,))
         conn.commit()
     return jsonify({"ok": True, "reviewed": reviewed})
+
+
+@bp.post("/api/videos/hide")
+def api_video_hide():
+    body = request.get_json(silent=True) or {}
+    src_table = str(body.get("src_table") or "").strip()
+    content_id = str(body.get("content_id") or "").strip()
+    if src_table not in TABLES or not content_id:
+        return jsonify({"error": "视频标识无效"}), 400
+    hidden = bool(body.get("hidden", True))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if hidden:
+                cur.execute("INSERT IGNORE INTO scrm_hidden_video (src_table,content_id,created_ts) VALUES (%s,%s,%s)", (src_table, content_id, int(time.time())))
+            else:
+                cur.execute("DELETE FROM scrm_hidden_video WHERE src_table=%s AND content_id=%s", (src_table, content_id))
+        conn.commit()
+    return jsonify({"ok": True, "hidden": hidden})
 
 
 @bp.post("/api/videos/product-name")
@@ -2864,19 +3286,26 @@ def _media_scope(cur, media, cands, by_plat, tok_idx, with_samples=False):
 @bp.get("/api/brands")
 def api_brands():
     q = (request.args.get("q") or "").strip()
-    where, params = "", []
+    clauses, params = [], []
     if q:
-        where = " WHERE name LIKE %s OR party_a LIKE %s"
-        params = [f"%{q}%", f"%{q}%"]
+        clauses.append("(name LIKE %s OR party_a LIKE %s)")
+        params.extend([f"%{q}%", f"%{q}%"])
     with get_conn() as conn:
         with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if scope is False:
+                return jsonify({"rows": [], "status_map": BRAND_STATUS_MAP, "team": TEAM})
+            if scope:
+                clauses.append("id=%s")
+                params.append(scope["id"])
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
             cur.execute(f"SELECT * FROM scrm_media{where} ORDER BY updated_ts DESC", params)
             brands = cur.fetchall()
             cands, by_plat, tok_idx = _load_content_index(cur)
             for b in brands:
                 sc = _media_scope(cur, b, cands, by_plat, tok_idx)
-            for k in ("deal_count", "video_count", "matched_count", "comment_count", "intent_count",
-                      "negative_count", "deal_amount_total", "deal_amount_avg"):
+                for k in ("deal_count", "video_count", "matched_count", "comment_count", "intent_count",
+                          "negative_count", "deal_amount_total", "deal_amount_avg"):
                     b[k] = sc[k]
             brands = [b for b in brands if b.get("deal_count", 0) > 0]
     return jsonify({"rows": brands, "status_map": BRAND_STATUS_MAP, "team": TEAM})
@@ -2886,6 +3315,9 @@ def api_brands():
 def api_brand_detail(bid):
     with get_conn() as conn:
         with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if not _media_scope_allows(scope, media_id=bid):
+                return jsonify({"error": "品牌(合作媒介)不存在"}), 404
             cur.execute("SELECT * FROM scrm_media WHERE id=%s", (bid,))
             brand = cur.fetchone()
             if not brand:
@@ -2894,13 +3326,27 @@ def api_brand_detail(bid):
             sc = _media_scope(cur, brand, cands, by_plat, tok_idx, with_samples=True)
             brand.update({k: sc[k] for k in ("deal_count", "video_count", "matched_count", "comment_count",
                                              "intent_count", "negative_count", "deal_amount_total", "deal_amount_avg")})
-            cur.execute(
-                "SELECT * FROM scrm_media_follow WHERE media_id=%s ORDER BY created_ts DESC",
-                (bid,))
-            follows = cur.fetchall()
+            # 品牌详情右栏展示该媒介关联品牌/产品的已审核博主原创，而非内部跟进台账。
+            original_videos = []
+            keywords = []
+            for deal in sc["deals"]:
+                keywords.extend([str(deal.get("brand") or "").strip(), str(deal.get("product") or "").strip()])
+            keywords = list(dict.fromkeys(item for item in keywords if item))[:12]
+            if keywords:
+                original_where = " OR ".join(["product_name LIKE %s"] * len(keywords))
+                cur.execute(f"""SELECT platform,content_id,title,url,upname,product_name,view_count,publish_time
+                                FROM {_content_union()}
+                                WHERE category='原创' AND product_reviewed=1 AND ({original_where})
+                                  AND NOT EXISTS (SELECT 1 FROM scrm_hidden_video H WHERE H.src_table=V.src_table AND H.content_id=V.content_id)
+                                  AND NOT EXISTS (SELECT 1 FROM scrm_deal_video DV WHERE DV.url=V.url AND COALESCE(DV.is_hidden,0)=1)
+                                ORDER BY publish_time DESC, add_ts DESC LIMIT 100""",
+                            [f"%{keyword}%" for keyword in keywords])
+                original_videos = cur.fetchall()
+            cur.execute("SELECT * FROM scrm_payment_account WHERE media_name=%s ORDER BY id", (brand.get("name"),))
+            payment_accounts = cur.fetchall()
     return jsonify({"brand": brand, "deals": sc["deals"], "video_samples": sc["videos"],
-                    "comment_samples": sc["comment_samples"], "follows": follows,
-                    "statuses": BRAND_STATUS, "team": TEAM})
+                    "comment_samples": sc["comment_samples"], "original_videos": original_videos,
+                    "payment_accounts": payment_accounts, "statuses": BRAND_STATUS, "team": TEAM})
 
 
 @bp.post("/api/brands/<int:bid>/update")
@@ -2918,6 +3364,9 @@ def api_brand_update(bid):
     sets.append("updated_ts=%s"); params.append(int(time.time())); params.append(bid)
     with get_conn() as conn:
         with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if not _media_scope_allows(scope, media_id=bid):
+                return jsonify({"error": "品牌(合作媒介)不存在"}), 404
             n = cur.execute(f"UPDATE scrm_media SET {', '.join(sets)} WHERE id=%s", params)
         conn.commit()
     return jsonify({"ok": True, "affected": n})
@@ -2932,6 +3381,9 @@ def api_brand_follow(bid):
     now = int(time.time())
     with get_conn() as conn:
         with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if not _media_scope_allows(scope, media_id=bid):
+                return jsonify({"error": "品牌(合作媒介)不存在"}), 404
             cur.execute(
                 "INSERT INTO scrm_media_follow (media_id, content, next_plan, creator, created_ts) "
                 "VALUES (%s,%s,%s,%s,%s)",
@@ -3000,22 +3452,31 @@ def api_inquiries():
         clauses.append("status=%s")
         params.append(status)
     clauses.insert(0, "deleted_ts IS NULL")
-    where = " WHERE " + " AND ".join(clauses)
     follow_cutoff = int(time.time()) - 5 * 86400
     with get_conn() as conn:
         with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if scope is False:
+                return jsonify({"rows": [], "total": 0, "page": page, "size": size,
+                                "statuses": INQUIRY_STATUSES, "by_status": {}, "last_sync": None, "team": TEAM})
+            if scope:
+                clauses.append("media_company=%s")
+                params.append(scope["name"])
+            where = " WHERE " + " AND ".join(clauses)
             # 二核后 5 天仍未明确合作或拒绝，自动结束跟进并标记为无意向。
-            cur.execute("""UPDATE scrm_inquiry
-                          SET status='无意向', synced_ts=%s, follow_stage_ts=%s
-                          WHERE follow_stage='second' AND status IN ('跟进中','有意向')
-                            AND follow_stage_ts IS NOT NULL AND follow_stage_ts < %s""",
-                        (int(time.time()), int(time.time()), follow_cutoff))
-            conn.commit()
+            # 媒介账户的列表请求仅是读取自己的数据，不能顺带改写全局询单。
+            if scope is None:
+                cur.execute("""UPDATE scrm_inquiry
+                              SET status='无意向', synced_ts=%s, follow_stage_ts=%s
+                              WHERE follow_stage='second' AND status IN ('跟进中','有意向')
+                                AND follow_stage_ts IS NOT NULL AND follow_stage_ts < %s""",
+                            (int(time.time()), int(time.time()), follow_cutoff))
+                conn.commit()
             cur.execute(f"SELECT COUNT(*) c FROM scrm_inquiry{where}", params)
             total = cur.fetchone()["c"]
             cur.execute(f"""
                 SELECT * FROM scrm_inquiry{where}
-                ORDER BY inquiry_ts DESC, id DESC LIMIT %s OFFSET %s
+                ORDER BY COALESCE(inquiry_ts, created_ts) DESC, id DESC LIMIT %s OFFSET %s
             """, params + [size, (page - 1) * size])
             rows = cur.fetchall()
             inquiry_ids = [r["id"] for r in rows]
@@ -3072,10 +3533,10 @@ def api_inquiry_create():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO scrm_inquiry
-                (fs_record_id,inquiry_no,name,brand,product,category,media_company,contact,wechat,sales,
+                (fs_record_id,inquiry_no,name,inquiry_ts,brand,product,category,media_company,contact,wechat,sales,
                  coop_types,platform_accounts,follow_detail,remark,status,created_ts,synced_ts)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (fs_id, fs_id.replace("manual-", ""), name, fields["brand"], fields["product"], fields["category"],
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (fs_id, fs_id.replace("manual-", ""), name, now, fields["brand"], fields["product"], fields["category"],
                  fields["media_company"], fields["contact"], fields["wechat"], fields["sales"], fields["coop_types"],
                  fields["platform_accounts"], fields["follow_detail"], fields["remark"], status, now, now))
             iid = cur.lastrowid
@@ -3149,6 +3610,10 @@ def api_business_wechat_save():
     body = request.get_json(silent=True) or {}
     wechat, member = str(body.get("wechat") or "").strip()[:128], str(body.get("member") or "").strip()[:64]
     mobile, email = str(body.get("feishu_mobile") or "").strip()[:32], str(body.get("feishu_email") or "").strip()[:128]
+    try:
+        monthly_target = max(0, float(body.get("monthly_target") or 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "每月目标KPI必须是有效金额"}), 400
     if not wechat or not member:
         return jsonify({"error": "微信号和商务组员必填"}), 400
     now = int(time.time())
@@ -3156,18 +3621,75 @@ def api_business_wechat_save():
         with conn.cursor() as cur:
             try:
                 if body.get("id"):
-                    cur.execute("UPDATE scrm_business_wechat SET wechat=%s,member=%s,feishu_mobile=%s,feishu_email=%s,feishu_open_id=NULL,updated_ts=%s WHERE id=%s",
-                                (wechat, member, mobile or None, email or None, now, int(body["id"])))
+                    cur.execute("UPDATE scrm_business_wechat SET wechat=%s,member=%s,feishu_mobile=%s,feishu_email=%s,monthly_target=%s,feishu_open_id=NULL,updated_ts=%s WHERE id=%s",
+                                (wechat, member, mobile or None, email or None, monthly_target, now, int(body["id"])))
                 else:
-                    cur.execute("""INSERT INTO scrm_business_wechat (wechat,member,feishu_mobile,feishu_email,created_ts,updated_ts)
-                                 VALUES (%s,%s,%s,%s,%s,%s)
+                    cur.execute("""INSERT INTO scrm_business_wechat (wechat,member,feishu_mobile,feishu_email,monthly_target,created_ts,updated_ts)
+                                 VALUES (%s,%s,%s,%s,%s,%s,%s)
                                  ON DUPLICATE KEY UPDATE member=VALUES(member),feishu_mobile=VALUES(feishu_mobile),
-                                   feishu_email=VALUES(feishu_email),feishu_open_id=NULL,updated_ts=VALUES(updated_ts)""",
-                                (wechat, member, mobile or None, email or None, now, now))
+                                   feishu_email=VALUES(feishu_email),monthly_target=VALUES(monthly_target),feishu_open_id=NULL,updated_ts=VALUES(updated_ts)""",
+                                (wechat, member, mobile or None, email or None, monthly_target, now, now))
             except Exception as exc:
                 return jsonify({"error": str(exc)[:160]}), 400
         conn.commit()
     return jsonify({"ok": True})
+
+
+@bp.post("/api/business-wechat/delete")
+def api_business_wechat_delete():
+    body = request.get_json(silent=True) or {}
+    try:
+        row_id = int(body.get("id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "商务组员记录无效"}), 400
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM scrm_business_wechat WHERE id=%s", (row_id,))
+            if cur.rowcount == 0:
+                return jsonify({"error": "商务组员记录不存在"}), 404
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@bp.get("/api/business-kpi")
+def api_business_kpi():
+    month = str(request.args.get("month") or datetime.now().strftime("%Y-%m"))
+    try:
+        start = datetime.strptime(month, "%Y-%m")
+    except ValueError:
+        return jsonify({"error": "月份格式应为 YYYY-MM"}), 400
+    end = datetime(start.year + (1 if start.month == 12 else 0), 1 if start.month == 12 else start.month + 1, 1)
+    start_ts, end_ts = int(start.timestamp()), int(end.timestamp())
+    ts_expr = "CASE WHEN %s > 20000000000 THEN %s/1000 ELSE %s END"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # 目标值直接来自设置管理的商务组员配置；停用的历史映射也保留其商务成员目标，避免汇总突然归零。
+            cur.execute("SELECT member, MAX(COALESCE(monthly_target,0)) AS monthly_target FROM scrm_business_wechat WHERE member<>'' GROUP BY member ORDER BY member")
+            members = {r["member"]: {"member": r["member"], "target": float(r.get("monthly_target") or 0), "completed": 0.0, "pending": 0.0} for r in cur.fetchall()}
+            cur.execute(f"""SELECT owner, COALESCE(SUM(amount),0) AS amount FROM scrm_deal
+                         WHERE owner IS NOT NULL AND owner<>'' AND status<>'canceled'
+                           AND {ts_expr % ('created_ts','created_ts','created_ts')} >= %s
+                           AND {ts_expr % ('created_ts','created_ts','created_ts')} < %s GROUP BY owner""", (start_ts, end_ts))
+            for r in cur.fetchall():
+                if r.get("owner") in members:
+                    members[r["owner"]]["completed"] = float(r.get("amount") or 0)
+            cur.execute(f"""SELECT sales, COALESCE(SUM(amount),0) AS amount FROM scrm_inquiry
+                         WHERE sales IS NOT NULL AND sales<>''
+                           AND (status IN ('跟进中','有意向','询单','二询')
+                                OR (follow_stage IN ('registered','second') AND status NOT IN ('无意向','未合作','合作成功')))
+                           AND {ts_expr % ('inquiry_ts','inquiry_ts','inquiry_ts')} >= %s
+                           AND {ts_expr % ('inquiry_ts','inquiry_ts','inquiry_ts')} < %s GROUP BY sales""", (start_ts, end_ts))
+            for r in cur.fetchall():
+                if r.get("sales") in members:
+                    members[r["sales"]]["pending"] = float(r.get("amount") or 0)
+    rows = []
+    for row in members.values():
+        row["progress"] = round(row["completed"] / row["target"] * 100, 2) if row["target"] > 0 else 0
+        rows.append(row)
+    rows.sort(key=lambda r: (-r["completed"], r["member"]))
+    total_target = sum(r["target"] for r in rows)
+    total_completed = sum(r["completed"] for r in rows)
+    return jsonify({"month": month, "rows": rows, "summary": {"target": total_target, "completed": total_completed, "pending": sum(r["pending"] for r in rows), "progress": round(total_completed / total_target * 100, 2) if total_target else 0}})
 
 
 @bp.get("/api/categories")
@@ -3179,6 +3701,54 @@ def api_categories():
                          ORDER BY c.parent_id IS NOT NULL, c.parent_id, c.status DESC, c.name""")
             rows = cur.fetchall()
     return jsonify({"rows": rows})
+
+
+@bp.get("/api/payment-accounts")
+def api_payment_accounts():
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM scrm_payment_account ORDER BY media_name, id")
+            rows = cur.fetchall()
+            cur.execute("SELECT id,name FROM scrm_media ORDER BY name")
+            media = cur.fetchall()
+    return jsonify({"rows": rows, "media": media})
+
+
+@bp.post("/api/payment-accounts/save")
+def api_payment_account_save():
+    body = request.get_json(silent=True) or {}
+    media_name = str(body.get("media_name") or "").strip()[:128]
+    subject_name = str(body.get("subject_name") or "").strip()[:255] or None
+    account_name = str(body.get("account_name") or "").strip()[:128]
+    bank_name = str(body.get("bank_name") or "").strip()[:128] or None
+    if not media_name or not account_name:
+        return jsonify({"error": "媒介名称和收款账户必填"}), 400
+    now = int(time.time())
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if body.get("id"):
+                cur.execute("UPDATE scrm_payment_account SET media_name=%s,subject_name=%s,account_name=%s,bank_name=%s,updated_ts=%s WHERE id=%s",
+                            (media_name, subject_name, account_name, bank_name, now, int(body["id"])))
+            else:
+                cur.execute("INSERT INTO scrm_payment_account (media_name,subject_name,account_name,bank_name,created_ts,updated_ts) VALUES (%s,%s,%s,%s,%s,%s)",
+                            (media_name, subject_name, account_name, bank_name, now, now))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@bp.post("/api/payment-accounts/delete")
+def api_payment_account_delete():
+    try:
+        account_id = int((request.get_json(silent=True) or {}).get("id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "收款账户 id 无效"}), 400
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM scrm_payment_account WHERE id=%s", (account_id,))
+            if cur.rowcount == 0:
+                return jsonify({"error": "收款账户不存在"}), 404
+        conn.commit()
+    return jsonify({"ok": True})
 
 
 @bp.get("/api/brand-management")
@@ -3467,9 +4037,16 @@ def api_deals():
     if status:
         clauses.append("D.status=%s")
         params.append(status)
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     with get_conn() as conn:
         with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if scope is False:
+                return jsonify({"rows": [], "total": 0, "page": page, "size": size,
+                                "status_map": DEAL_STATUS_MAP, "team": TEAM})
+            if scope:
+                clauses.append("D.media_company=%s")
+                params.append(scope["name"])
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
             cur.execute(f"SELECT COUNT(*) c FROM scrm_deal D{where}", params)
             total = cur.fetchone()["c"]
             cur.execute(f"""
@@ -3510,8 +4087,11 @@ def api_deal_detail(did):
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM scrm_deal WHERE id=%s", (did,))
             deal = cur.fetchone()
-            if not deal:
+            scope = _current_media_scope(cur)
+            if not deal or not _media_scope_allows(scope, media_company=(deal or {}).get("media_company")):
                 return jsonify({"error": "商单不存在"}), 404
+            cur.execute("SELECT * FROM scrm_payment_account WHERE media_name=%s ORDER BY id", (deal.get("media_company"),))
+            payment_accounts = cur.fetchall()
             cur.execute("SELECT * FROM scrm_deal_video WHERE deal_id=%s ORDER BY id DESC", (did,))
             videos = cur.fetchall()
             kpi_cfg_cache = {}
@@ -3600,6 +4180,8 @@ def api_deal_detail(did):
                 cur.execute(f"""SELECT platform,content_id,title,url,upname,product_name,view_count,publish_time
                                 FROM {_content_union()}
                                 WHERE category='原创' AND product_reviewed=1 AND ({brand_where})
+                                  AND NOT EXISTS (SELECT 1 FROM scrm_hidden_video H WHERE H.src_table=V.src_table AND H.content_id=V.content_id)
+                                  AND NOT EXISTS (SELECT 1 FROM scrm_deal_video DV WHERE DV.url=V.url AND COALESCE(DV.is_hidden,0)=1)
                                 ORDER BY publish_time DESC, add_ts DESC LIMIT 100""",
                             [f"%{brand}%" for brand in historical_brands])
                 historical_original_videos = cur.fetchall()
@@ -3638,7 +4220,7 @@ def api_deal_detail(did):
     deal["data_completed"] = data_completed
     deal["display_expect_ts"] = latest_publish_ts or None
     deal["display_status"] = ("已结束" if deal.get("status") == "ended" else ("已取消" if deal.get("status") == "canceled" else ("KPI已完成" if data_completed else ("已发布" if has_published_video and deal.get("status") == "published" else deal.get("status")))))
-    return jsonify({"deal": deal, "videos": videos, "inquiry": inquiry,
+    return jsonify({"deal": deal, "videos": videos, "payment_accounts": payment_accounts, "inquiry": inquiry,
                     "status_map": DEAL_STATUS_MAP, "team": TEAM,
                     "kpi_configs": kpi_configs, "kpi_platforms": KPI_PLATFORMS,
                     "categories": categories, "selling_point_templates": selling_point_templates,
@@ -4292,7 +4874,7 @@ def api_deal_update(did):
             sets.append("completed_ts=COALESCE(completed_ts,%s)"); params.append(int(time.time()))
     if "note" in body:
         sets.append("note=%s"); params.append(str(body.get("note") or "")[:500])
-    for key, limit in (("name", 255), ("brand", 128), ("product", 255), ("model", 255), ("media_company", 128),
+    for key, limit in (("name", 255), ("brand", 128), ("product", 255), ("model", 255), ("media_company", 128), ("execution_group", 255), ("ae_executor", 128), ("payment_account_name", 128),
                        ("owner", 64), ("coop_types", 255), ("platform_accounts", 500), ("kpi", 255)):
         if key in body:
             sets.append(f"{key}=%s"); params.append(str(body.get(key) or "")[:limit])
@@ -4377,9 +4959,19 @@ def api_deal_update(did):
             if n and any(key in body for key in ("brand", "product", "model")):
                 _sync_deal_product_names(cur, did)
             synced_videos = _sync_deal_videos_by_actual_date(cur, did, actual_publish_date) if n and "actual_publish_date" in body else 0
+            if n:
+                cur.execute("SELECT * FROM scrm_deal WHERE id=%s", (did,))
+                updated_deal = cur.fetchone()
+                if updated_deal and updated_deal.get("status") == "won":
+                    _ensure_deal_media_artifacts(
+                        cur, did, updated_deal.get("media_company"), updated_deal.get("brand"), None, None,
+                        updated_deal.get("owner"), _resolve_sales_open_ids(cur, updated_deal.get("owner"))
+                    )
+                _sync_deal_rebate_reconciliation(cur, did)
         conn.commit()
     if not n:
         return jsonify({"error": "商单不存在"}), 404
+    _dispatch_pending_media_notifications()
     return jsonify({"ok": True, "synced_videos": synced_videos if "actual_publish_date" in body else 0})
 
 
@@ -4467,6 +5059,7 @@ def api_deal_video_add(did):
                     synced = cur.execute(
                         f"UPDATE `{m['ctable']}` SET `original_url`=%s, `category`='商单', `product_name`=%s WHERE id=%s",
                         (url[:500], _product_display_name(deal_row.get("brand"), deal_row.get("product"), deal_row.get("model")), matched["id"]))
+            _sync_deal_rebate_reconciliation(cur, did)
         conn.commit()
     return jsonify({"ok": True, "synced": bool(synced)})
 
@@ -4551,6 +5144,7 @@ def api_deal_video_update():
                              url[:500], video_amount, publish_ts, int(time.time())))
                 cur.execute("UPDATE scrm_deal SET status=IF(status IN ('ended','kpi_done','canceled'),status,'published'), updated_ts=%s WHERE id=%s",
                             (int(time.time()), stale_deal_id))
+                _sync_deal_rebate_reconciliation(cur, stale_deal_id)
                 conn.commit()
                 return jsonify({"ok": True, "created": True})
             if url:
@@ -4586,6 +5180,7 @@ def api_deal_video_update():
                     cur.execute(f"UPDATE `{m['ctable']}` SET `original_url`=%s, `category`='商单', `product_name`=%s WHERE id=%s",
                                 (url[:500], _product_display_name(deal.get("brand"), deal.get("product"), deal.get("model")), matched["id"]))
             cur.execute("UPDATE scrm_deal SET updated_ts=%s WHERE id=%s", (int(time.time()), row["deal_id"]))
+            _sync_deal_rebate_reconciliation(cur, row["deal_id"])
         conn.commit()
     return jsonify({"ok": True})
 
@@ -4599,13 +5194,32 @@ def api_deal_video_delete():
         return jsonify({"error": "非法 id"}), 400
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT platform, url, auto_matched FROM scrm_deal_video WHERE id=%s", (vid,))
+            cur.execute("SELECT deal_id, platform, url, auto_matched FROM scrm_deal_video WHERE id=%s", (vid,))
             video = cur.fetchone()
             if video and video.get("auto_matched"):
                 _restore_content_category(cur, video.get("platform"), video.get("url"))
             cur.execute("DELETE FROM scrm_deal_video WHERE id=%s", (vid,))
+            if video:
+                _sync_deal_rebate_reconciliation(cur, video["deal_id"])
         conn.commit()
     return jsonify({"ok": True})
+
+
+@bp.post("/api/deals/video/hide")
+def api_deal_video_hide():
+    body = request.get_json(silent=True) or {}
+    try:
+        vid = int(body.get("id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "非法 id"}), 400
+    hidden = bool(body.get("hidden", True))
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE scrm_deal_video SET is_hidden=%s WHERE id=%s", (1 if hidden else 0, vid))
+            if cur.rowcount == 0:
+                return jsonify({"error": "视频记录不存在"}), 404
+        conn.commit()
+    return jsonify({"ok": True, "hidden": hidden})
 
 
 @bp.get("/api/media")
@@ -4623,15 +5237,26 @@ def api_media():
     if cooperation_frequency:
         where_parts.append("cooperation_frequency=%s")
         params.append(cooperation_frequency)
-    where = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
     with get_conn() as conn:
         with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if scope is False:
+                return jsonify({"rows": [], "team": TEAM, "frequencies": []})
+            if scope:
+                where_parts.append("M.id=%s")
+                params.append(scope["id"])
+            where = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
             cur.execute(f"""
                 SELECT M.*, (SELECT COUNT(*) FROM scrm_deal D WHERE D.media_company=M.name) deal_count
                 FROM scrm_media M{where} ORDER BY M.updated_ts DESC
             """, params)
             rows = cur.fetchall()
-            cur.execute("SELECT DISTINCT cooperation_frequency FROM scrm_media WHERE cooperation_frequency IS NOT NULL AND cooperation_frequency<>'' ORDER BY cooperation_frequency")
+            frequency_where = " WHERE cooperation_frequency IS NOT NULL AND cooperation_frequency<>''"
+            frequency_params = []
+            if scope:
+                frequency_where += " AND id=%s"
+                frequency_params.append(scope["id"])
+            cur.execute("SELECT DISTINCT cooperation_frequency FROM scrm_media" + frequency_where + " ORDER BY cooperation_frequency", frequency_params)
             frequencies = [r["cooperation_frequency"] for r in cur.fetchall()]
     return jsonify({"rows": rows, "team": TEAM, "frequencies": frequencies})
 
@@ -4645,6 +5270,9 @@ def api_media_save():
     now = int(time.time())
     with get_conn() as conn:
         with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if scope is False or (scope and not body.get("id")):
+                return jsonify({"error": "媒介账户不能新增其他媒介公司"}), 403
             if body.get("id"):
                 cur.execute("""
                     UPDATE scrm_media SET name=%s, is_brand=%s, cooperation_frequency=%s,
@@ -4681,6 +5309,121 @@ def api_media_delete():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM scrm_media WHERE id=%s", (mid,))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+# ============================================================
+# API: 返点对账
+# ============================================================
+REBATE_RECONCILIATION_STATUS = {
+    "unverified": "未核实",
+    "pending_payment": "待打款",
+    "paid": "打款完成",
+}
+
+
+def _reconciliation_date(value, label):
+    if value in (None, ""):
+        return None
+    value = str(value).strip()
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError(f"{label}必须为YYYY-MM-DD")
+
+
+@bp.get("/api/rebate-reconciliations")
+def api_rebate_reconciliations():
+    q = str(request.args.get("q") or "").strip()
+    status = str(request.args.get("status") or "").strip()
+    clauses, params = [], []
+    if q:
+        clauses.append("(order_no LIKE %s OR deal_name LIKE %s OR media_name LIKE %s OR account_name LIKE %s OR account_no LIKE %s)")
+        params.extend([f"%{q}%"] * 5)
+    if status in REBATE_RECONCILIATION_STATUS:
+        clauses.append("status=%s")
+        params.append(status)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if scope is False:
+                return jsonify({"rows": [], "status_map": REBATE_RECONCILIATION_STATUS})
+            if scope:
+                clauses.append("media_name=%s")
+                params.append(scope["name"])
+            where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+            cur.execute(f"SELECT * FROM scrm_rebate_reconciliation{where} ORDER BY updated_ts DESC, id DESC", params)
+            rows = cur.fetchall()
+    for row in rows:
+        for key in ("verified_date", "paid_date"):
+            if row.get(key) and hasattr(row[key], "isoformat"):
+                row[key] = row[key].isoformat()
+    return jsonify({"rows": rows, "status_map": REBATE_RECONCILIATION_STATUS})
+
+
+@bp.post("/api/rebate-reconciliations/save")
+def api_rebate_reconciliation_save():
+    body = request.get_json(silent=True) or {}
+    record_id = body.get("id")
+    deal_name = str(body.get("deal_name") or "").strip()[:255]
+    if not deal_name:
+        return jsonify({"error": "商单名称必填"}), 400
+    status = str(body.get("status") or "unverified")
+    if status not in REBATE_RECONCILIATION_STATUS:
+        return jsonify({"error": "非法对账状态"}), 400
+    try:
+        def money(key, label):
+            raw = body.get(key)
+            if raw in (None, ""):
+                return None
+            value = Decimal(str(raw))
+            if value < 0:
+                raise ValueError(f"{label}不能小于0")
+            return value
+        amount, rebate = money("amount", "金额"), money("rebate", "返点")
+        verified_date = _reconciliation_date(body.get("verified_date"), "核实时间")
+        paid_date = _reconciliation_date(body.get("paid_date"), "打款时间")
+    except (ValueError, ArithmeticError) as exc:
+        return jsonify({"error": str(exc) or "金额必须为有效数字"}), 400
+    today = datetime.now().date()
+    if status in ("pending_payment", "paid") and not verified_date:
+        verified_date = today
+    if status == "paid" and not paid_date:
+        paid_date = today
+    if status != "paid":
+        paid_date = None
+    now = int(time.time())
+    media_name = str(body.get("media_name") or "").strip()[:128] or None
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            scope = _current_media_scope(cur)
+            if scope is False:
+                return jsonify({"error": "媒介账户无有效归属"}), 403
+            if scope:
+                if record_id:
+                    cur.execute("SELECT media_name FROM scrm_rebate_reconciliation WHERE id=%s", (record_id,))
+                    old = cur.fetchone()
+                    if not old or not _media_scope_allows(scope, media_company=old.get("media_name")):
+                        return jsonify({"error": "资源不存在"}), 404
+                media_name = scope["name"]
+            values = (str(body.get("order_no") or "").strip()[:64] or None, deal_name, media_name, amount, rebate,
+                      str(body.get("account_name") or "").strip()[:128] or None,
+                      str(body.get("account_no") or "").strip()[:128] or None,
+                      str(body.get("bank_name") or "").strip()[:255] or None,
+                      str(body.get("note") or "").strip()[:500] or None,
+                      status, verified_date, paid_date)
+            if record_id:
+                n = cur.execute("""UPDATE scrm_rebate_reconciliation SET
+                    order_no=%s,deal_name=%s,media_name=%s,amount=%s,rebate=%s,account_name=%s,account_no=%s,
+                    bank_name=%s,note=%s,status=%s,verified_date=%s,paid_date=%s,updated_ts=%s WHERE id=%s""",
+                    values + (now, record_id))
+                if not n:
+                    return jsonify({"error": "对账记录不存在"}), 404
+            else:
+                cur.execute("""INSERT INTO scrm_rebate_reconciliation
+                    (order_no,deal_name,media_name,amount,rebate,account_name,account_no,bank_name,note,status,verified_date,paid_date,created_ts,updated_ts)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", values + (now, now))
         conn.commit()
     return jsonify({"ok": True})
 

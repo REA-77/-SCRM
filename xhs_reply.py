@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 from contextlib import suppress
 from pathlib import Path
@@ -135,7 +136,7 @@ async def _unique_visible(locator):
 
 
 async def reply_browser(note_id, content, *, browser_id=None, storage_state=None, user_agent="", dry_run=False, target_comment_id="",
-                        target_text="", xsec_token="", bit_api_url="http://127.0.0.1:54345",
+                        target_text="", xsec_token="", bit_api_url=None,
                         timeout_seconds=30, max_scrolls=16,
                         editor_selector='textarea, #content-textarea, [contenteditable="true"]',
                         submit_selector='button:has-text("发送"), .submit:has-text("发送")'):
@@ -151,6 +152,7 @@ async def reply_browser(note_id, content, *, browser_id=None, storage_state=None
     sent = False
     local_browser = None
     try:
+        bit_api_url = bit_api_url or os.getenv("BITBROWSER_API", "http://127.0.0.1:54345")
         validate(note_id, content, target_comment_id)
         if (not browser_id and storage_state is None) or timeout_seconds <= 0 or max_scrolls < 0:
             raise ValueError("需要有效 browser_id、正数超时及非负滚动次数")
@@ -280,7 +282,7 @@ def main():
     parser.add_argument("--target-comment-id", default="")
     parser.add_argument("--xsec-token", default="")
     parser.add_argument("--browser-id")
-    parser.add_argument("--bit-api-url", default="http://127.0.0.1:54345")
+    parser.add_argument("--bit-api-url", default=os.getenv("BITBROWSER_API", "http://127.0.0.1:54345"))
     parser.add_argument("--target-text", default="")
     parser.add_argument("--storage-state", help="Playwright storage_state JSON 文件")
     parser.add_argument("--user-agent")

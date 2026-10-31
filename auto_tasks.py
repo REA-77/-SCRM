@@ -91,7 +91,7 @@ def _load_task(cur, task_id):
         return None, ('仅待执行、失败或已领取任务可执行', 409)
     if SOURCES.get(task['platform']) != task['src_table'] or (
         task['action_type'] != 'reply' and
-        not (task['platform'] in ('B站', '抖音') and task['action_type'] == 'delete')
+        not (task['platform'] in ('B站', '抖音', '小红书') and task['action_type'] == 'delete')
     ):
         return None, ('暂不支持该平台或操作', 400)
     cur.execute(f"SELECT * FROM `{task['src_table']}` WHERE id=%s", (task['src_pk'],))
