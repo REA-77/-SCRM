@@ -1,0 +1,14 @@
+.git
+.venv*
+__pycache__/
+*.py[cod]
+*.log
+config.py
+node_modules/
+outputs/
+backups/
+SCRMMJ/.deploy-tools/
+SCRMMJ/deploy/.scrmmj_deploy_key
+SCRMMJ/deploy/.scrmmj_deploy_key.pub
+SCRMMJ/local-portal.stderr.log
+SCRMMJ/local-portal.stdout.log
